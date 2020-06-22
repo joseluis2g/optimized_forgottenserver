@@ -1,6 +1,6 @@
 /**
  * The Forgotten Server - a free and open-source MMORPG server emulator
- * Copyright (C) 2019  Mark Samman <mark.samman@gmail.com>
+ * Copyright (C) 2020  Mark Samman <mark.samman@gmail.com>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -73,9 +73,7 @@ class Monster final : public Creature
 		const std::string& getNameDescription() const override {
 			return mType->nameDescription;
 		}
-		std::string getDescription(int32_t) const override {
-			return strDescription + '.';
-		}
+		std::string getDescription(int32_t) const override;
 
 		CreatureType_t getType() const override {
 			return CREATURETYPE_MONSTER;

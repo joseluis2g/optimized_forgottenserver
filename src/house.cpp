@@ -1,6 +1,6 @@
 /**
  * The Forgotten Server - a free and open-source MMORPG server emulator
- * Copyright (C) 2019  Mark Samman <mark.samman@gmail.com>
+ * Copyright (C) 2020  Mark Samman <mark.samman@gmail.com>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -240,7 +240,8 @@ bool House::transferToDepot(Player* player) const
 	ItemList moveItemList;
 	for (HouseTile* tile : houseTiles) {
 		if (const TileItemVector* items = tile->getItemList()) {
-			for (Item* item : *items) {
+			for (auto it = items->rbegin(), end = items->rend(); it != end; ++it) {
+				Item* item = (*it);
 				if (item->isPickupable()) {
 					moveItemList.push_back(item);
 				} else {
@@ -255,8 +256,46 @@ bool House::transferToDepot(Player* player) const
 		}
 	}
 
-	for (Item* item : moveItemList) {
-		g_game.internalMoveItem(item->getParent(), player->getInbox(), INDEX_WHEREEVER, item, item->getItemCount(), nullptr, FLAG_NOLIMIT);
+	if (!moveItemList.empty()) {
+		Item* newItem = Item::CreateItem(ITEM_PARCEL_STAMPED);
+		if (newItem) {
+			Container* parcel = newItem->getContainer();
+			if (parcel) {
+				for (Item* item : moveItemList) {
+					g_game.internalMoveItem(item->getParent(), parcel, INDEX_WHEREEVER, item, item->getItemCount(), nullptr, FLAG_NOLIMIT);
+				}
+
+				Item* label = Item::CreateItem(ITEM_LABEL);
+				if (label) {
+					label->setText("You have forgot your items.");
+					if (g_game.internalAddItem(parcel, label, INDEX_WHEREEVER, FLAG_NOLIMIT) != RETURNVALUE_NOERROR) {
+						delete label;
+					}
+				}
+
+				#if GAME_FEATURE_MARKET > 0
+				g_game.internalAddItem(player->getInbox(), parcel, INDEX_WHEREEVER, FLAG_NOLIMIT);
+				#else
+				player->setLastDepotId(static_cast<int16_t>(townId));
+				g_game.internalAddItem(player->getDepotLocker(townId), parcel, INDEX_WHEREEVER, FLAG_NOLIMIT);
+				#endif
+				return true;
+			} else {
+				delete newItem;
+			}
+		}
+
+		#if GAME_FEATURE_MARKET > 0
+		for (Item* item : moveItemList) {
+			g_game.internalMoveItem(item->getParent(), player->getInbox(), INDEX_WHEREEVER, item, item->getItemCount(), nullptr, FLAG_NOLIMIT);
+		}
+		#else
+		DepotLocker* depot = player->getDepotLocker(townId);
+		player->setLastDepotId(static_cast<int16_t>(townId));
+		for (Item* item : moveItemList) {
+			g_game.internalMoveItem(item->getParent(), depot, INDEX_WHEREEVER, item, item->getItemCount(), nullptr, FLAG_NOLIMIT);
+		}
+		#endif
 	}
 	return true;
 }
@@ -407,17 +446,13 @@ void AccessList::parseList(const std::string& list)
 {
 	playerList.clear();
 	guildRankList.clear();
-	expressionList.clear();
-	regExList.clear();
 	this->list = list;
 	if (list.empty()) {
 		return;
 	}
 
-	std::istringstream listStream(list);
-	std::string line;
-
-	while (getline(listStream, line)) {
+	auto lines = explodeString(list, "\n", 100);
+	for (auto& line : lines) {
 		trimString(line);
 		trim_left(line, '\t');
 		trim_right(line, '\t');
@@ -436,9 +471,10 @@ void AccessList::parseList(const std::string& list)
 			} else {
 				addGuildRank(line.substr(0, at_pos - 1), line.substr(at_pos + 1));
 			}
-		} else if (line.find("!") != std::string::npos || line.find("*") != std::string::npos || line.find("?") != std::string::npos) {
-			addExpression(line);
-		} else {
+		} else if (line.find_first_of("!*?") != std::string::npos) {
+			// Remove regular expressions since they don't make much sense in houses
+			continue;
+		} else if (line.length() <= NETWORKMESSAGE_PLAYERNAME_MAXLENGTH) {
 			addPlayer(line);
 		}
 	}
@@ -497,52 +533,8 @@ void AccessList::addGuildRank(const std::string& name, const std::string& rankNa
 	}
 }
 
-void AccessList::addExpression(const std::string& expression)
-{
-	if (std::find(expressionList.begin(), expressionList.end(), expression) != expressionList.end()) {
-		return;
-	}
-
-	std::string outExp;
-	outExp.reserve(expression.length());
-
-	std::string metachars = ".[{}()\\+|^$";
-	for (const char c : expression) {
-		if (metachars.find(c) != std::string::npos) {
-			outExp.push_back('\\');
-		}
-		outExp.push_back(c);
-	}
-
-	replaceString(outExp, "*", ".*");
-	replaceString(outExp, "?", ".?");
-
-	try {
-		if (!outExp.empty()) {
-			expressionList.push_back(outExp);
-
-			if (outExp.front() == '!') {
-				if (outExp.length() > 1) {
-					regExList.emplace_front(std::regex(outExp.substr(1)), false);
-				}
-			} else {
-				regExList.emplace_back(std::regex(outExp), true);
-			}
-		}
-	} catch (...) {}
-}
-
 bool AccessList::isInList(const Player* player)
 {
-	std::string name = asLowerCaseString(player->getName());
-	std::cmatch what;
-
-	for (const auto& it : regExList) {
-		if (std::regex_match(name.c_str(), what, it.first)) {
-			return it.second;
-		}
-	}
-
 	auto playerIt = playerList.find(player->getGUID());
 	if (playerIt != playerList.end()) {
 		return true;
@@ -739,9 +731,7 @@ void Houses::payHouses(RentPeriod_t rentPeriod) const
 			if (house->getPayRentWarnings() < 7) {
 				int32_t daysLeft = 7 - house->getPayRentWarnings();
 
-				Item* letter = Item::CreateItem(ITEM_LETTER_STAMPED);
 				std::string period;
-
 				switch (rentPeriod) {
 					case RENTPERIOD_DAILY:
 						period = "daily";
@@ -763,10 +753,25 @@ void Houses::payHouses(RentPeriod_t rentPeriod) const
 						break;
 				}
 
-				std::ostringstream ss;
-				ss << "Warning! \nThe " << period << " rent of " << house->getRent() << " gold for your house \"" << house->getName() << "\" is payable. Have it within " << daysLeft << " days or you will lose this house.";
-				letter->setText(ss.str());
-				g_game.internalAddItem(player.getInbox(), letter, INDEX_WHEREEVER, FLAG_NOLIMIT);
+				Item* letter = Item::CreateItem(ITEM_LETTER_STAMPED);
+				if (letter) {
+					std::ostringstream ss;
+					ss << "Warning! \nThe " << period << " rent of " << house->getRent() << " gold for your house \"" << house->getName() << "\" is payable. Have it within " << daysLeft << " days or you will lose this house.";
+					letter->setText(ss.str());
+					#if GAME_FEATURE_MARKET > 0
+					if (g_game.internalAddItem(player.getInbox(), letter, INDEX_WHEREEVER, FLAG_NOLIMIT) != RETURNVALUE_NOERROR) {
+						delete letter;
+					}
+					#else
+					DepotLocker* depot = player.getDepotLocker(town->getID());
+					player.setLastDepotId(static_cast<int16_t>(town->getID()));
+					if (depot) {
+						if (g_game.internalAddItem(depot, letter, INDEX_WHEREEVER, FLAG_NOLIMIT) != RETURNVALUE_NOERROR) {
+							delete letter;
+						}
+					}
+					#endif
+				}
 				house->setPayRentWarnings(house->getPayRentWarnings() + 1);
 			} else {
 				house->setOwner(0, true, &player);

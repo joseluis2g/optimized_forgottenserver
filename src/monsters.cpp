@@ -1,6 +1,6 @@
 /**
  * The Forgotten Server - a free and open-source MMORPG server emulator
- * Copyright (C) 2019  Mark Samman <mark.samman@gmail.com>
+ * Copyright (C) 2020  Mark Samman <mark.samman@gmail.com>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -56,9 +56,34 @@ void MonsterType::loadLoot(MonsterType* monsterType, LootBlock lootBlock)
 	}
 }
 
+bool Monsters::loadRaces()
+{
+	races = {};
+	pugi::xml_document doc;
+	pugi::xml_parse_result result = doc.load_file("data/monster/races.xml");
+	if (!result) {
+		printXMLError("Error - Monsters::loadRaces", "data/monster/races.xml", result);
+		return false;
+	}
+
+	for (auto raceNode : doc.child("races").children()) {
+		pugi::xml_attribute attr;
+		if (!(attr = raceNode.attribute("id"))) {
+			std::cout << "[Warning - Monsters::loadRaces] Missing race id." << std::endl;
+			continue;
+		}
+
+		races.emplace(raceNode.attribute("name").as_string(), pugi::cast<uint16_t>(attr.value()));
+	}
+	return true;
+}
+
 bool Monsters::loadFromXml(bool reloading /*= false*/)
 {
-	unloadedMonsters = {};
+	if (!loadRaces()) {
+		return false;
+	}
+
 	pugi::xml_document doc;
 	pugi::xml_parse_result result = doc.load_file("data/monster/monsters.xml");
 	if (!result) {
@@ -71,10 +96,12 @@ bool Monsters::loadFromXml(bool reloading /*= false*/)
 	for (auto monsterNode : doc.child("monsters").children()) {
 		std::string name = asLowerCaseString(monsterNode.attribute("name").as_string());
 		std::string file = "data/monster/" + std::string(monsterNode.attribute("file").as_string());
-		if (reloading && monsters.find(name) != monsters.end()) {
-			loadMonster(file, name, true);
-		} else {
-			unloadedMonsters.emplace(name, file);
+		loadMonster(file, name, reloading);
+
+		pugi::xml_attribute attrRaceId = monsterNode.attribute("raceid");
+		if (attrRaceId) {
+			uint16_t raceId = pugi::cast<uint16_t>(attrRaceId.value());
+			monsterRaces[raceId][pugi::cast<uint16_t>(monsterNode.attribute("id").value())] = monsterNode.attribute("name").as_string();
 		}
 	}
 	return true;
@@ -322,7 +349,8 @@ bool Monsters::deserializeSpell(const pugi::xml_node& node, spellBlock_t& sb, co
 			combat->setParam(COMBAT_PARAM_TYPE, COMBAT_HEALING);
 			combat->setParam(COMBAT_PARAM_AGGRESSIVE, 0);
 		} else if (!tfs_strcmp(tmpName.c_str(), "speed")) {
-			int32_t speedChange = 0;
+			int32_t minSpeedChange = 0;
+			int32_t maxSpeedChange = 0;
 			int32_t duration = 10000;
 
 			if ((attr = node.attribute("duration"))) {
@@ -330,23 +358,40 @@ bool Monsters::deserializeSpell(const pugi::xml_node& node, spellBlock_t& sb, co
 			}
 
 			if ((attr = node.attribute("speedchange"))) {
-				speedChange = pugi::cast<int32_t>(attr.value());
-				if (speedChange < -1000) {
-					//cant be slower than 100%
-					speedChange = -1000;
+				minSpeedChange = pugi::cast<int32_t>(attr.value());
+				maxSpeedChange = minSpeedChange;
+			} else if ((attr = node.attribute("minspeedchange"))) {
+				minSpeedChange = pugi::cast<int32_t>(attr.value());
+				maxSpeedChange = pugi::cast<int32_t>(node.attribute("maxspeedchange").value());
+				if (maxSpeedChange == 0) {
+					maxSpeedChange = minSpeedChange; // static speedchange value
 				}
 			}
 
+			//cant be slower than 100%
+			if (minSpeedChange < -1000) {
+				minSpeedChange = -1000;
+			}
+			if (maxSpeedChange < -1000) {
+				maxSpeedChange = -1000;
+			}
+
 			ConditionType_t conditionType;
-			if (speedChange > 0) {
-				conditionType = CONDITION_HASTE;
-				combat->setParam(COMBAT_PARAM_AGGRESSIVE, 0);
+			if ((minSpeedChange < 0) == (maxSpeedChange < 0)) {
+				if (minSpeedChange > 0) {
+					conditionType = CONDITION_HASTE;
+					combat->setParam(COMBAT_PARAM_AGGRESSIVE, 0);
+				} else {
+					conditionType = CONDITION_PARALYZE;
+				}
 			} else {
-				conditionType = CONDITION_PARALYZE;
+				std::cout << "[Error - Monsters::deserializeSpell] - " << description << " - can't determine condition type because minSpeedChange/maxSpeedChange sign mismatch" << std::endl;
+				delete combat;
+				return false;
 			}
 
 			ConditionSpeed* condition = static_cast<ConditionSpeed*>(Condition::createCondition(CONDITIONID_COMBAT, conditionType, duration, 0));
-			condition->setFormulaVars(speedChange / 1000.0, 0, speedChange / 1000.0, 0);
+			condition->setFormulaVars(minSpeedChange / 1000.0, 0, maxSpeedChange / 1000.0, 0);
 			combat->addCondition(condition);
 		} else if (!tfs_strcmp(tmpName.c_str(), "outfit")) {
 			int32_t duration = 10000;
@@ -612,31 +657,42 @@ bool Monsters::deserializeSpell(MonsterSpell* spell, spellBlock_t& sb, const std
 			}
 			combat->setParam(COMBAT_PARAM_TYPE, spell->combatType);
 		} else if (!tfs_strcmp(tmpName.c_str(), "speed")) {
-			int32_t speedChange = 0;
+			int32_t minSpeedChange = spell->minSpeedChange;
+			int32_t maxSpeedChange = spell->maxSpeedChange;
 			int32_t duration = 10000;
 
 			if (spell->duration != 0) {
 				duration = spell->duration;
 			}
 
-			if (spell->speedChange != 0) {
-				speedChange = spell->speedChange;
-				if (speedChange < -1000) {
-					//cant be slower than 100%
-					speedChange = -1000;
-				}
+			if (maxSpeedChange == 0) {
+				maxSpeedChange = minSpeedChange; // static speedchange value
+			}
+
+			//cant be slower than 100%
+			if (minSpeedChange < -1000) {
+				minSpeedChange = -1000;
+			}
+			if (maxSpeedChange < -1000) {
+				maxSpeedChange = -1000;
 			}
 
 			ConditionType_t conditionType;
-			if (speedChange > 0) {
-				conditionType = CONDITION_HASTE;
-				combat->setParam(COMBAT_PARAM_AGGRESSIVE, 0);
+			if ((minSpeedChange < 0) == (maxSpeedChange < 0)) {
+				if (minSpeedChange > 0) {
+					conditionType = CONDITION_HASTE;
+					combat->setParam(COMBAT_PARAM_AGGRESSIVE, 0);
+				} else {
+					conditionType = CONDITION_PARALYZE;
+				}
 			} else {
-				conditionType = CONDITION_PARALYZE;
+				std::cout << "[Error - Monsters::deserializeSpell] - " << description << " - can't determine condition type because minSpeedChange/maxSpeedChange sign mismatch" << std::endl;
+				delete spell;
+				return false;
 			}
 
 			ConditionSpeed* condition = static_cast<ConditionSpeed*>(Condition::createCondition(CONDITIONID_COMBAT, conditionType, duration, 0));
-			condition->setFormulaVars(speedChange / 1000.0, 0, speedChange / 1000.0, 0);
+			condition->setFormulaVars(minSpeedChange / 1000.0, 0, maxSpeedChange / 1000.0, 0);
 			combat->addCondition(condition);
 		} else if (!tfs_strcmp(tmpName.c_str(), "outfit")) {
 			int32_t duration = 10000;
@@ -754,7 +810,7 @@ MonsterType* Monsters::loadMonster(const std::string& file, const std::string& m
 	}
 
 	if (reloading) {
-		auto it = monsters.find(asLowerCaseString(monsterName));
+		auto it = monsters.find(monsterName);
 		if (it != monsters.end()) {
 			mType = &it->second;
 			mType->info = {};
@@ -762,7 +818,7 @@ MonsterType* Monsters::loadMonster(const std::string& file, const std::string& m
 	}
 
 	if (!mType) {
-		mType = &monsters[asLowerCaseString(monsterName)];
+		mType = &monsters[monsterName];
 	}
 
 	mType->name = attr.as_string();
@@ -880,6 +936,8 @@ MonsterType* Monsters::loadMonster(const std::string& file, const std::string& m
 				mType->info.runAwayHealth = pugi::cast<int32_t>(attr.value());
 			} else if (strcasecmp(attrName, "hidehealth") == 0) {
 				mType->info.hiddenHealth = attr.as_bool();
+			} else if (strcasecmp(attrName, "isblockable") == 0) {
+				mType->info.isBlockable = attr.as_bool();
 			} else if (strcasecmp(attrName, "canwalkonenergy") == 0) {
 				mType->info.canWalkOnEnergy = attr.as_bool();
 			} else if (strcasecmp(attrName, "canwalkonfire") == 0) {
@@ -941,9 +999,11 @@ MonsterType* Monsters::loadMonster(const std::string& file, const std::string& m
 			std::cout << "[Warning - Monsters::loadMonster] Missing look type/typeex. " << file << std::endl;
 		}
 
+		#if GAME_FEATURE_MOUNTS > 0
 		if ((attr = node.attribute("mount"))) {
 			mType->info.outfit.lookMount = pugi::cast<uint16_t>(attr.value());
 		}
+		#endif
 
 		if ((attr = node.attribute("corpse"))) {
 			mType->info.lookcorpse = pugi::cast<uint16_t>(attr.value());
@@ -1297,36 +1357,41 @@ void Monsters::loadLootContainer(const pugi::xml_node& node, LootBlock& lBlock)
 	}
 }
 
+std::string Monsters::getRaceName(uint16_t raceId)
+{
+	for (const auto& race : races) {
+		if (race.second == raceId) {
+			return race.first;
+		}
+	}
+	return std::string();
+}
+
 MonsterType* Monsters::getMonsterType(const std::string& name)
 {
 	std::string lowerCaseName = asLowerCaseString(name);
 
 	auto it = monsters.find(lowerCaseName);
 	if (it == monsters.end()) {
-		auto it2 = unloadedMonsters.find(lowerCaseName);
-		if (it2 == unloadedMonsters.end()) {
-			return nullptr;
-		}
-
-		return loadMonster(it2->second, name);
+		return nullptr;
 	}
 	return &it->second;
 }
 
-void Monsters::addMonsterType(const std::string& name, MonsterType* mType)
+MonsterType* Monsters::addMonsterType(const std::string& name)
 {
-	mType = &monsters[asLowerCaseString(name)];
+	return &monsters[asLowerCaseString(name)];
 }
 
 bool Monsters::loadCallback(LuaScriptInterface* scriptInterface, MonsterType* mType)
 {
-	if (!scriptInterface) {
-		std::cout << "Failure: [Monsters::loadCallback] scriptInterface == nullptr." << std::endl;
+	int32_t id = scriptInterface->getEvent();
+	if (id == -1) {
+		std::cout << "[Warning - MonsterType::loadCallback] Event not found. " << std::endl;
 		return false;
 	}
 
-	int32_t id = scriptInterface->getEvent();
-
+	mType->info.scriptInterface = scriptInterface;
 	if (mType->info.eventType == MONSTERS_EVENT_THINK) {
 		mType->info.thinkEvent = id;
 	} else if (mType->info.eventType == MONSTERS_EVENT_APPEAR) {
@@ -1339,6 +1404,5 @@ bool Monsters::loadCallback(LuaScriptInterface* scriptInterface, MonsterType* mT
 		mType->info.creatureSayEvent = id;
 	}
 
-	scriptInterface->getScriptEnv()->setScriptId(id, scriptInterface);
 	return true;
 }

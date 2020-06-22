@@ -1,6 +1,6 @@
 /**
  * The Forgotten Server - a free and open-source MMORPG server emulator
- * Copyright (C) 2019  Mark Samman <mark.samman@gmail.com>
+ * Copyright (C) 2020  Mark Samman <mark.samman@gmail.com>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -53,20 +53,36 @@ struct TextMessage
 	TextMessage(MessageClasses type, std::string text) : type(type), text(std::move(text)) {}
 };
 
+#if GAME_FEATURE_QUEST_TRACKER > 0
+class Mission;
+#endif
+
 class ProtocolGame final : public Protocol
 {
 	public:
 		// static protocol information
+		#if GAME_FEATURE_SERVER_SENDFIRST > 0
 		enum {server_sends_first = true};
-		enum {protocol_identifier = 0}; // Not required as we send first
+		#else
+		enum {server_sends_first = false};
+		#endif
+		enum {protocol_identifier = 0x0A};
+		#if GAME_FEATURE_PROTOCOLSEQUENCE > 0 || GAME_FEATURE_ADLER32_CHECKSUM > 0
 		enum {use_checksum = true};
+		#else
+		enum {use_checksum = false};
+		#endif
 		static const char* protocol_name() {
 			return "gameworld protocol";
 		}
 
 		explicit ProtocolGame(Connection_ptr connection) : Protocol(connection) {}
 
-		void login(const std::string& name, uint32_t accountId, OperatingSystem_t operatingSystem);
+		#if GAME_FEATURE_SESSIONKEY > 0
+		void login(const std::string accountName, const std::string password, std::string characterName, std::string token, uint32_t tokenTime, OperatingSystem_t operatingSystem, OperatingSystem_t tfcOperatingSystem);
+		#else
+		void login(const std::string accountName, const std::string password, std::string characterName, OperatingSystem_t operatingSystem, OperatingSystem_t tfcOperatingSystem);
+		#endif
 		void logout(bool displayEffect, bool forced);
 
 		uint16_t getVersion() const {
@@ -79,7 +95,7 @@ class ProtocolGame final : public Protocol
 		ProtocolGame_ptr getThis() {
 			return std::static_pointer_cast<ProtocolGame>(shared_from_this());
 		}
-		void connect(uint32_t playerId, OperatingSystem_t operatingSystem);
+		void connect(uint32_t playerId, OperatingSystem_t operatingSystem, OperatingSystem_t tfcOperatingSystem);
 		void disconnectClient(const std::string& message) const;
 		void writeToOutputBuffer(const NetworkMessage& msg);
 
@@ -97,15 +113,31 @@ class ProtocolGame final : public Protocol
 		void onConnect() override;
 
 		//Parse methods
+		#if GAME_FEATURE_QUEST_TRACKER > 0
+		void parseTrackedQuestFlags(NetworkMessage& msg);
+		#endif
 		void parseAutoWalk(NetworkMessage& msg);
 		void parseSetOutfit(NetworkMessage& msg);
 		void parseSay(NetworkMessage& msg);
+		#if CLIENT_VERSION >= 1092
+		void parseWrapableItem(NetworkMessage& msg);
+		#endif
 		void parseLookAt(NetworkMessage& msg);
 		void parseLookInBattleList(NetworkMessage& msg);
 		void parseFightModes(NetworkMessage& msg);
 		void parseAttack(NetworkMessage& msg);
 		void parseFollow(NetworkMessage& msg);
 		void parseEquipObject(NetworkMessage& msg);
+		#if CLIENT_VERSION >= 1150
+		void parseTeleport(NetworkMessage& msg);
+		#endif
+
+		void parseCyclopediaMonsters(NetworkMessage& msg);
+		void parseCyclopediaRace(NetworkMessage& msg);
+		void parseCyclopediaHouseAction(NetworkMessage& msg);
+		void parseCyclopediaCharacterInfo(NetworkMessage& msg);
+
+		void parseTournamentLeaderboard(NetworkMessage& msg);
 
 		void parseBugReport(NetworkMessage& msg);
 		void parseDebugAssert(NetworkMessage& msg);
@@ -133,23 +165,35 @@ class ProtocolGame final : public Protocol
 		void parsePassPartyLeadership(NetworkMessage& msg);
 		void parseEnableSharedPartyExperience(NetworkMessage& msg);
 
+		#if GAME_FEATURE_MOUNTS > 0
 		void parseToggleMount(NetworkMessage& msg);
-
+		#endif
+		#if CLIENT_VERSION >= 960
 		void parseModalWindowAnswer(NetworkMessage& msg);
+		#endif
 
+		#if GAME_FEATURE_BROWSEFIELD > 0
 		void parseBrowseField(NetworkMessage& msg);
+		#endif
+		#if GAME_FEATURE_CONTAINER_PAGINATION > 0
 		void parseSeekInContainer(NetworkMessage& msg);
+		#endif
+		#if GAME_FEATURE_INSPECTION > 0
+		void parseInspectionObject(NetworkMessage& msg);
+		#endif
 
 		//trade methods
 		void parseRequestTrade(NetworkMessage& msg);
 		void parseLookInTrade(NetworkMessage& msg);
 
+		#if GAME_FEATURE_MARKET > 0
 		//market methods
 		void parseMarketLeave();
 		void parseMarketBrowse(NetworkMessage& msg);
 		void parseMarketCreateOffer(NetworkMessage& msg);
 		void parseMarketCancelOffer(NetworkMessage& msg);
 		void parseMarketAcceptOffer(NetworkMessage& msg);
+		#endif
 
 		//VIP methods
 		void parseAddVip(NetworkMessage& msg);
@@ -166,8 +210,13 @@ class ProtocolGame final : public Protocol
 		void parseCloseChannel(NetworkMessage& msg);
 
 		//Send functions
+		#if GAME_FEATURE_INSPECTION > 0
+		void sendItemInspection(uint16_t itemId, uint8_t itemCount, const Item* item, bool cyclopedia);
+		#endif
 		void sendChannelMessage(const std::string& author, const std::string& text, SpeakClasses type, uint16_t channel);
+		#if GAME_FEATURE_CHAT_PLAYERLIST > 0
 		void sendChannelEvent(uint16_t channelId, const std::string& playerName, ChannelEvent_t channelEvent);
+		#endif
 		void sendClosePrivate(uint16_t channelId);
 		void sendCreatePrivateChannel(uint16_t channelId, const std::string& channelName);
 		void sendChannelsDialog();
@@ -175,12 +224,20 @@ class ProtocolGame final : public Protocol
 		void sendOpenPrivateChannel(const std::string& receiver);
 		void sendToChannel(const Creature* creature, SpeakClasses type, const std::string& text, uint16_t channelId);
 		void sendPrivateMessage(const Player* speaker, SpeakClasses type, const std::string& text);
-		void sendIcons(uint16_t icons);
+		void sendIcons(uint32_t icons);
 		void sendFYIBox(const std::string& message);
 
 		void sendDistanceShoot(const Position& from, const Position& to, uint8_t type);
 		void sendMagicEffect(const Position& pos, uint8_t type);
-		void sendCreatureHealth(const Creature* creature);
+		void sendCreatureHealth(const Creature* creature, uint8_t healthPercent);
+		#if GAME_FEATURE_PARTY_LIST > 0
+		void sendPartyCreatureUpdate(const Creature* target);
+		void sendPartyCreatureShield(const Creature* target);
+		void sendPartyCreatureSkull(const Creature* target);
+		void sendPartyCreatureHealth(const Creature* target, uint8_t healthPercent);
+		void sendPartyPlayerMana(const Player* target, uint8_t manaPercent);
+		void sendPartyCreatureShowStatus(const Creature* target, bool showStatus);
+		#endif
 		void sendSkills();
 		void sendPing();
 		void sendPingBack();
@@ -189,28 +246,62 @@ class ProtocolGame final : public Protocol
 
 		void sendQuestLog();
 		void sendQuestLine(const Quest* quest);
+		#if GAME_FEATURE_QUEST_TRACKER > 0
+		void sendTrackedQuests(uint8_t remainingQuests, std::vector<uint16_t>& quests);
+		void sendUpdateTrackedQuest(const Mission* mission);
+		#endif
 
 		void sendCancelWalk();
 		void sendChangeSpeed(const Creature* creature, uint32_t speed);
 		void sendCancelTarget();
 		void sendCreatureOutfit(const Creature* creature, const Outfit_t& outfit);
 		void sendStats();
+		#if CLIENT_VERSION >= 950
 		void sendBasicData();
+		#endif
+		//void sendBlessStatus();
 		void sendTextMessage(const TextMessage& message);
 		void sendReLoginWindow(uint8_t unfairFightReduction);
 
 		void sendTutorial(uint8_t tutorialId);
 		void sendAddMarker(const Position& pos, uint8_t markType, const std::string& desc);
 
+		void sendMonsterCyclopedia();
+		void sendCyclopediaMonsters(const std::string& race);
+		void sendCyclopediaRace(uint16_t monsterId);
+		void sendCyclopediaBonusEffects();
+		void sendCyclopediaCharacterBaseInformation();
+		void sendCyclopediaCharacterGeneralStats();
+		void sendCyclopediaCharacterCombatStats();
+		void sendCyclopediaCharacterRecentDeaths();
+		void sendCyclopediaCharacterRecentPvPKills();
+		void sendCyclopediaCharacterAchievements();
+		void sendCyclopediaCharacterItemSummary();
+		void sendCyclopediaCharacterOutfitsMounts();
+		void sendCyclopediaCharacterStoreSummary();
+		void sendCyclopediaCharacterInspection();
+		void sendCyclopediaCharacterBadges();
+		void sendCyclopediaCharacterTitles();
+
+		void sendTournamentLeaderboard();
+
+		void updateCreatureData(const Creature* creature);
+		#if CLIENT_VERSION >= 854
 		void sendCreatureWalkthrough(const Creature* creature, bool walkthrough);
+		#endif
 		void sendCreatureShield(const Creature* creature);
 		void sendCreatureSkull(const Creature* creature);
-		void sendCreatureType(uint32_t creatureId, uint8_t creatureType);
+		#if CLIENT_VERSION >= 910
+		void sendCreatureType(const Creature* creature, uint8_t creatureType);
+		#endif
+		#if CLIENT_VERSION >= 1000 && CLIENT_VERSION < 1185
 		void sendCreatureHelpers(uint32_t creatureId, uint16_t helpers);
+		#endif
 
 		void sendShop(Npc* npc, const ShopInfoList& itemList);
 		void sendCloseShop();
-		void sendSaleItemList(const std::list<ShopInfo>& shop);
+		void sendSaleItemList(const std::vector<ShopInfo>& shop, const std::map<uint32_t, uint32_t>& inventoryMap);
+		#if GAME_FEATURE_MARKET > 0
 		void sendMarketEnter(uint32_t depotId);
 		void sendMarketLeave();
 		void sendMarketBrowseItem(uint16_t itemId, const MarketOfferList& buyOffers, const MarketOfferList& sellOffers);
@@ -219,6 +310,7 @@ class ProtocolGame final : public Protocol
 		void sendMarketCancelOffer(const MarketOfferEx& offer);
 		void sendMarketBrowseOwnHistory(const HistoryMarketOfferList& buyOffers, const HistoryMarketOfferList& sellOffers);
 		void sendMarketDetail(uint16_t itemId);
+		#endif
 		void sendTradeItemRequest(const std::string& traderName, const Item* item, bool ack);
 		void sendCloseTrade();
 
@@ -228,26 +320,37 @@ class ProtocolGame final : public Protocol
 		void sendOutfitWindow();
 
 		void sendUpdatedVIPStatus(uint32_t guid, VipStatus_t newStatus);
+		#if GAME_FEATURE_ADDITIONAL_VIPINFO > 0
 		void sendVIP(uint32_t guid, const std::string& name, const std::string& description, uint32_t icon, bool notify, VipStatus_t status);
+		#else
+		void sendVIP(uint32_t guid, const std::string& name, VipStatus_t status);
+		#endif
 		void sendVIPEntries();
-
-		void sendPendingStateEntered();
-		void sendEnterWorld();
-
+		#if CLIENT_VERSION >= 1000
 		void sendFightModes();
+		#endif
 
 		void sendCreatureLight(const Creature* creature);
 		void sendWorldLight(LightInfo lightInfo);
+		#if CLIENT_VERSION >= 1121
+		void sendTibiaTime(int32_t time);
+		#endif
 
 		void sendCreatureSquare(const Creature* creature, SquareColor_t color);
 
+		#if CLIENT_VERSION >= 870
 		void sendSpellCooldown(uint8_t spellId, uint32_t time);
 		void sendSpellGroupCooldown(SpellGroup_t groupId, uint32_t time);
+		#endif
 
 		//tiles
 		void sendMapDescription(const Position& pos);
 
+		#if GAME_FEATURE_TILE_ADDTHING_STACKPOS > 0
 		void sendAddTileItem(const Position& pos, uint32_t stackpos, const Item* item);
+		#else
+		void sendAddTileItem(const Position& pos, const Item* item);
+		#endif
 		void sendUpdateTileItem(const Position& pos, uint32_t stackpos, const Item* item);
 		void sendRemoveTileThing(const Position& pos, uint32_t stackpos);
 		void sendUpdateTile(const Tile* tile, const Position& pos);
@@ -257,19 +360,29 @@ class ProtocolGame final : public Protocol
 		                      const Position& oldPos, int32_t oldStackPos, bool teleport);
 
 		//containers
+		#if GAME_FEATURE_CONTAINER_PAGINATION > 0
 		void sendAddContainerItem(uint8_t cid, uint16_t slot, const Item* item);
 		void sendUpdateContainerItem(uint8_t cid, uint16_t slot, const Item* item);
 		void sendRemoveContainerItem(uint8_t cid, uint16_t slot, const Item* lastItem);
-
 		void sendContainer(uint8_t cid, const Container* container, bool hasParent, uint16_t firstIndex);
+		#else
+		void sendAddContainerItem(uint8_t cid, const Item* item);
+		void sendUpdateContainerItem(uint8_t cid, uint8_t slot, const Item* item);
+		void sendRemoveContainerItem(uint8_t cid, uint8_t slot);
+		void sendContainer(uint8_t cid, const Container* container, bool hasParent);
+		#endif
 		void sendCloseContainer(uint8_t cid);
 
 		//inventory
 		void sendInventoryItem(slots_t slot, const Item* item);
-		void sendItems();
+		#if GAME_FEATURE_INVENTORY_LIST > 0
+		void sendItems(const std::map<uint32_t, uint32_t>& inventoryMap);
+		#endif
 
 		//messages
+		#if CLIENT_VERSION >= 960
 		void sendModalWindow(const ModalWindow& modalWindow);
+		#endif
 
 		//Help functions
 
@@ -298,31 +411,30 @@ class ProtocolGame final : public Protocol
 		//shop
 		void AddShopItem(const ShopInfo& item);
 
+		//items
+		void AddItem(uint16_t id, uint8_t count);
+		void AddItem(const Item* item);
+
 		//otclient
 		void parseExtendedOpcode(NetworkMessage& msg);
 
+		//translations
+		SpeakClasses translateSpeakClassFromClient(uint8_t talkType);
+		uint8_t translateSpeakClassToClient(SpeakClasses talkType);
+		uint8_t translateMessageClassToClient(MessageClasses messageType);
+
 		friend class Player;
-
-		// Helpers so we don't need to bind every time
-		template <typename Callable, typename... Args>
-		void addGameTask(Callable function, Args&&... args) {
-			g_dispatcher.addTask(createTask(std::bind(function, &g_game, std::forward<Args>(args)...)));
-		}
-
-		template <typename Callable, typename... Args>
-		void addGameTaskTimed(uint32_t delay, Callable function, Args&&... args) {
-			g_dispatcher.addTask(createTask(delay, std::bind(function, &g_game, std::forward<Args>(args)...)));
-		}
 
 		std::unordered_set<uint32_t> knownCreatureSet;
 		Player* player = nullptr;
 
-		uint32_t eventConnect = 0;
+		uint64_t eventConnect = 0;
 		uint32_t challengeTimestamp = 0;
-		uint16_t version = CLIENT_VERSION_MIN;
+		uint16_t version = CLIENT_VERSION;
 
 		uint8_t challengeRandom = 0;
 
+		bool addExivaRestrictions = false;
 		bool debugAssertSent = false;
 		bool acceptPackets = false;
 };

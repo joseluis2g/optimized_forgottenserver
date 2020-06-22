@@ -1,6 +1,6 @@
 /**
  * The Forgotten Server - a free and open-source MMORPG server emulator
- * Copyright (C) 2019  Mark Samman <mark.samman@gmail.com>
+ * Copyright (C) 2020  Mark Samman <mark.samman@gmail.com>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -64,6 +64,9 @@ class ConfigManager
 			MYSQL_SOCK,
 			DEFAULT_PRIORITY,
 			MAP_AUTHOR,
+			#if GAME_FEATURE_STORE > 0
+			STORE_URL,
+			#endif
 
 			LAST_STRING_CONFIG /* this must be the last one */
 		};
@@ -100,6 +103,17 @@ class ConfigManager
 			MAX_MARKET_OFFERS_AT_A_TIME_PER_PLAYER,
 			EXP_FROM_PLAYERS_LEVEL_RANGE,
 			MAX_PACKETS_PER_SECOND,
+			COMPRESSION_LEVEL,
+			#if GAME_FEATURE_STORE > 0
+			STORE_COIN_PACKAGES,
+			#endif
+			#if GAME_FEATURE_QUEST_TRACKER > 0
+			MAX_TRACKED_QUESTS,
+			MAX_TRACKED_QUESTS_PREMIUM,
+			#endif
+			#if GAME_FEATURE_PARTY_LIST > 0
+			PARTY_LIST_MAX_DISTANCE,
+			#endif
 
 			LAST_INTEGER_CONFIG /* this must be the last one */
 		};

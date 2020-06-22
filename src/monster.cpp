@@ -1,6 +1,6 @@
 /**
  * The Forgotten Server - a free and open-source MMORPG server emulator
- * Copyright (C) 2019  Mark Samman <mark.samman@gmail.com>
+ * Copyright (C) 2020  Mark Samman <mark.samman@gmail.com>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -82,7 +82,14 @@ void Monster::removeList()
 
 bool Monster::canSee(const Position& pos) const
 {
-	return Creature::canSee(getPosition(), pos, 9, 9);
+	return Creature::canSee(getPosition(), pos, CLIENT_MAP_WIDTH_OFFSET, CLIENT_MAP_HEIGHT_OFFFSET);
+}
+
+std::string Monster::getDescription(int32_t) const
+{
+	std::string str;
+	str.reserve(strDescription.length() + static_cast<size_t>(2));
+	return str.append(strDescription).append(1, '.');
 }
 
 bool Monster::canWalkOnFieldType(CombatType_t combatType) const
@@ -178,6 +185,7 @@ void Monster::onRemoveCreature(Creature* creature, bool isLogout)
 
 	if (creature == this) {
 		if (spawn) {
+			spawn->removeMonster(this);
 			spawn->startSpawnCheck();
 		}
 
@@ -365,7 +373,7 @@ void Monster::updateTargetList()
 		}
 	}
 
-	SpectatorHashSet spectators;
+	SpectatorVector spectators;
 	g_game.map.getSpectators(spectators, position, true);
 	spectators.erase(this);
 	for (Creature* spectator : spectators) {
@@ -606,7 +614,6 @@ BlockType_t Monster::blockHit(Creature* attacker, CombatType_t combatType, int32
 	return blockType;
 }
 
-
 bool Monster::isTarget(const Creature* creature) const
 {
 	if (creature->isRemoved() || !creature->isAttackable() ||
@@ -634,7 +641,7 @@ bool Monster::selectTarget(Creature* creature)
 
 	if (isHostile() || isSummon()) {
 		if (setAttackedCreature(creature) && !isSummon()) {
-			g_dispatcher.addTask(createTask(std::bind(&Game::checkCreatureAttack, &g_game, getID())));
+			g_dispatcher.addTask(std::bind(&Game::checkCreatureAttack, &g_game, getID()));
 		}
 	}
 	return setFollowCreature(creature);
@@ -720,7 +727,6 @@ void Monster::onThink(uint32_t interval)
 
 	if (!isInSpawnRange(position)) {
 		g_game.internalTeleport(this, masterPos);
-		setIdle(true);
 	} else {
 		updateIdleStatus();
 
@@ -1032,9 +1038,10 @@ void Monster::pushItems(Tile* tile)
 		uint32_t moveCount = 0;
 		uint32_t removeCount = 0;
 
+		int32_t topItemSize = tile->getTopItemCount();
 		int32_t downItemSize = tile->getDownItemCount();
 		for (int32_t i = downItemSize; --i >= 0;) {
-			Item* item = items->at(i);
+			Item* item = (*items)[topItemSize + i];
 			if (item && item->hasProperty(CONST_PROP_MOVEABLE) && (item->hasProperty(CONST_PROP_BLOCKPATH)
 			        || item->hasProperty(CONST_PROP_BLOCKSOLID))) {
 				if (moveCount < 20 && Monster::pushItem(item)) {

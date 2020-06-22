@@ -1,6 +1,6 @@
 /**
  * The Forgotten Server - a free and open-source MMORPG server emulator
- * Copyright (C) 2019  Mark Samman <mark.samman@gmail.com>
+ * Copyright (C) 2020  Mark Samman <mark.samman@gmail.com>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -43,11 +43,16 @@ class DepotChest final : public Container
 		bool canRemove() const override {
 			return false;
 		}
+		bool isRemoved() const override {
+			return false;
+		}
 
+		#if GAME_FEATURE_MARKET > 0
 		Cylinder* getParent() const override;
 		Cylinder* getRealParent() const override {
 			return parent;
 		}
+		#endif
 
 	private:
 		uint32_t maxDepotItems;

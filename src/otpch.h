@@ -1,6 +1,6 @@
 /**
  * The Forgotten Server - a free and open-source MMORPG server emulator
- * Copyright (C) 2019  Mark Samman <mark.samman@gmail.com>
+ * Copyright (C) 2020  Mark Samman <mark.samman@gmail.com>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -34,7 +34,7 @@
 #include <memory>
 #include <mutex>
 #include <sstream>
-#include <string>
+#include "stringExtend.h"
 #include <thread>
 #include <unordered_map>
 #include <vector>
@@ -43,3 +43,8 @@
 
 #include <pugixml.hpp>
 #include "simd.h"
+#include "features.h"
+
+#if GAME_FEATURE_ROBINHOOD_HASH_MAP > 0
+#include "robin_hood.h"
+#endif

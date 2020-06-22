@@ -1,6 +1,6 @@
 /**
  * The Forgotten Server - a free and open-source MMORPG server emulator
- * Copyright (C) 2019  Mark Samman <mark.samman@gmail.com>
+ * Copyright (C) 2020  Mark Samman <mark.samman@gmail.com>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -19,7 +19,19 @@
 
 #include "otpch.h"
 
+#ifdef __has_include
+
+#if __has_include(<luajit/lua.hpp>)
+#include <luajit/lua.hpp>
+#elif __has_include(<lua.hpp>)
 #include <lua.hpp>
+#else
+#error "Cannot detect lua library"
+#endif
+
+#else
+#include <lua.hpp>
+#endif
 
 #include "configmanager.h"
 #include "game.h"
@@ -145,6 +157,9 @@ bool ConfigManager::load()
 	string[LOCATION] = getGlobalString(L, "location", "");
 	string[MOTD] = getGlobalString(L, "motd", "");
 	string[WORLD_TYPE] = getGlobalString(L, "worldType", "pvp");
+	#if GAME_FEATURE_STORE > 0
+	string[STORE_URL] = getGlobalString(L, "storeUrl", "http://static.tibia.com/images/store/");
+	#endif
 
 	integer[MAX_PLAYERS] = getGlobalNumber(L, "maxPlayers");
 	integer[PZ_LOCKED] = getGlobalNumber(L, "pzLocked", 60000);
@@ -172,6 +187,17 @@ bool ConfigManager::load()
 	integer[CHECK_EXPIRED_MARKET_OFFERS_EACH_MINUTES] = getGlobalNumber(L, "checkExpiredMarketOffersEachMinutes", 60);
 	integer[MAX_MARKET_OFFERS_AT_A_TIME_PER_PLAYER] = getGlobalNumber(L, "maxMarketOffersAtATimePerPlayer", 100);
 	integer[MAX_PACKETS_PER_SECOND] = getGlobalNumber(L, "maxPacketsPerSecond", 25);
+	integer[COMPRESSION_LEVEL] = getGlobalNumber(L, "packetCompressionLevel", 6);
+	#if GAME_FEATURE_STORE > 0
+	integer[STORE_COIN_PACKAGES] = getGlobalNumber(L, "storeCoinPackages", 25);
+	#endif
+	#if GAME_FEATURE_QUEST_TRACKER > 0
+	integer[MAX_TRACKED_QUESTS] = getGlobalNumber(L, "maxTrackedQuests", 10);
+	integer[MAX_TRACKED_QUESTS_PREMIUM] = getGlobalNumber(L, "maxTrackedQuestsPremium", 25);
+	#endif
+	#if GAME_FEATURE_PARTY_LIST > 0
+	integer[PARTY_LIST_MAX_DISTANCE] = getGlobalNumber(L, "partyListMaxDistance", 0);
+	#endif
 
 	loaded = true;
 	lua_close(L);
@@ -187,13 +213,13 @@ bool ConfigManager::reload()
 	return result;
 }
 
-static std::string dummy;
+static std::string dummyStr;
 
 const std::string& ConfigManager::getString(string_config_t what) const
 {
 	if (what >= LAST_STRING_CONFIG) {
 		std::cout << "[Warning - ConfigManager::getString] Accessing invalid index: " << what << std::endl;
-		return dummy;
+		return dummyStr;
 	}
 	return string[what];
 }

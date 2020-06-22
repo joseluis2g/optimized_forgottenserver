@@ -1,6 +1,6 @@
 /**
  * The Forgotten Server - a free and open-source MMORPG server emulator
- * Copyright (C) 2019  Mark Samman <mark.samman@gmail.com>
+ * Copyright (C) 2020  Mark Samman <mark.samman@gmail.com>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -79,6 +79,14 @@ class Party
 
 		void updatePlayerTicks(Player* player, uint32_t points);
 		void clearPlayerPoints(Player* player);
+
+		#if GAME_FEATURE_PARTY_LIST > 0
+		void showPlayerStatus(Player* player, Player* member, bool showStatus);
+		void updatePlayerStatus(Player* player);
+		void updatePlayerStatus(Player* player, const Position& oldPos, const Position& newPos);
+		void updatePlayerHealth(const Player* player, const Creature* target, uint8_t healthPercent);
+		void updatePlayerMana(const Player* player, uint8_t manaPercent);
+		#endif
 
 	private:
 		bool canEnableSharedExperience();

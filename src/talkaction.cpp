@@ -1,6 +1,6 @@
 /**
  * The Forgotten Server - a free and open-source MMORPG server emulator
- * Copyright (C) 2019  Mark Samman <mark.samman@gmail.com>
+ * Copyright (C) 2020  Mark Samman <mark.samman@gmail.com>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -38,7 +38,7 @@ TalkActions::~TalkActions()
 void TalkActions::clear(bool fromLua)
 {
 	for (auto it = talkActions.begin(); it != talkActions.end(); ) {
-		if (fromLua == it->second.fromLua) {
+		if (fromLua == it->second->fromLua) {
 			it = talkActions.erase(it);
 		} else {
 			++it;
@@ -69,14 +69,14 @@ Event_ptr TalkActions::getEvent(const std::string& nodeName)
 bool TalkActions::registerEvent(Event_ptr event, const pugi::xml_node&)
 {
 	TalkAction_ptr talkAction{static_cast<TalkAction*>(event.release())}; // event is guaranteed to be a TalkAction
-	talkActions.emplace(talkAction->getWords(), std::move(*talkAction));
+	talkActions.emplace(talkAction->getWords(), std::move(talkAction));
 	return true;
 }
 
 bool TalkActions::registerLuaEvent(TalkAction* event)
 {
 	TalkAction_ptr talkAction{ event };
-	talkActions.emplace(talkAction->getWords(), std::move(*talkAction));
+	talkActions.emplace(talkAction->getWords(), std::move(talkAction));
 	return true;
 }
 
@@ -88,18 +88,18 @@ TalkActionResult_t TalkActions::playerSaySpell(Player* player, SpeakClasses type
 		if (param_find != std::string::npos) {
 			param = instantWords.substr(param_find + 1);
 			instantWords = instantWords.substr(0, param_find);
-			trim_left(param, ' ');
+			trim_right(instantWords, ' ');
 		}
 	}
 
 	auto it = talkActions.find(instantWords);
 	if (it != talkActions.end()) {
-		char separator = it->second.getSeparator();
+		char separator = it->second->getSeparator();
 		if (separator != ' ' && !param.empty()) {
 			return TALKACTION_CONTINUE;
 		}
 
-		if (it->second.executeSay(player, param, type)) {
+		if (it->second->executeSay(player, param, type)) {
 			return TALKACTION_CONTINUE;
 		} else {
 			return TALKACTION_BREAK;

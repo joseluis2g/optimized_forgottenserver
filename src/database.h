@@ -1,6 +1,6 @@
 /**
  * The Forgotten Server - a free and open-source MMORPG server emulator
- * Copyright (C) 2019  Mark Samman <mark.samman@gmail.com>
+ * Copyright (C) 2020  Mark Samman <mark.samman@gmail.com>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -22,7 +22,19 @@
 
 #include <boost/lexical_cast.hpp>
 
+#ifdef __has_include
+
+#if __has_include(<mysql/mysql.h>)
+#include <mysql/mysql.h>
+#elif __has_include(<mysql.h>)
 #include <mysql.h>
+#else
+#error "Cannot detect mysql library"
+#endif
+
+#else
+#include <mysql.h>
+#endif
 
 class DBResult;
 using DBResult_ptr = std::shared_ptr<DBResult>;
@@ -31,11 +43,24 @@ class Database
 {
 	public:
 		Database() = default;
-		~Database();
 
 		// non-copyable
 		Database(const Database&) = delete;
 		Database& operator=(const Database&) = delete;
+
+		/**
+		 * Inits MySQL Client library
+		 *
+		 * @return true on successful init, false on error
+		 */
+		bool init();
+
+		/**
+		 * Ends MySQL Client library
+		 *
+		 * @return nothing
+		 */
+		void end();
 
 		/**
 		 * Connects to the database
@@ -43,6 +68,13 @@ class Database
 		 * @return true on successful connection, false on error
 		 */
 		bool connect();
+
+		/**
+		 * Disconnects from the database
+		 *
+		 * @return nothing
+		 */
+		void disconnect();
 
 		/**
 		 * Executes command.
@@ -119,7 +151,6 @@ class Database
 		bool commit();
 
 		MYSQL* handle = nullptr;
-		std::recursive_mutex databaseLock;
 		uint64_t maxPacketSize = 1048576;
 
 	friend class DBTransaction;
@@ -231,6 +262,7 @@ class DBTransaction
 		TransactionStates_t state = STATE_NO_START;
 };
 
+//g_database should be used only in dispatcher thread
 extern Database g_database;
 
 #endif

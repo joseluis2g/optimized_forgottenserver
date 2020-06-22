@@ -1,6 +1,6 @@
 /**
  * The Forgotten Server - a free and open-source MMORPG server emulator
- * Copyright (C) 2019  Mark Samman <mark.samman@gmail.com>
+ * Copyright (C) 2020  Mark Samman <mark.samman@gmail.com>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -23,6 +23,7 @@
 
 #include "game.h"
 
+#include "modules.h"
 #include "iomarket.h"
 
 #include "configmanager.h"
@@ -46,6 +47,7 @@ Game g_game;
 ConfigManager g_config;
 Monsters g_monsters;
 Vocations g_vocations;
+Modules g_modules;
 extern Scripts* g_scripts;
 RSA g_RSA;
 
@@ -74,12 +76,16 @@ int main(int argc, char* argv[])
 	// Setup bad allocation handler
 	std::set_new_handler(badAllocationHandler);
 
+	if (!g_database.init()) {
+		return 1;
+	}
+
 	ServiceManager serviceManager;
 
 	g_dispatcher.start();
 	g_scheduler.start();
 
-	g_dispatcher.addTask(createTask(std::bind(mainLoader, argc, argv, &serviceManager)));
+	g_dispatcher.addTask(std::bind(mainLoader, argc, argv, &serviceManager));
 
 	g_loaderSignal.wait(g_loaderUniqueLock);
 
@@ -96,6 +102,7 @@ int main(int argc, char* argv[])
 	g_scheduler.join();
 	g_databaseTasks.join();
 	g_dispatcher.join();
+	g_database.end();
 	return 0;
 }
 
@@ -125,6 +132,7 @@ void mainLoader(int, char*[], ServiceManager* services)
 
 	std::cout << "A server developed by " << STATUS_SERVER_DEVELOPERS << std::endl;
 	std::cout << "Visit our forum for updates, support, and resources: http://otland.net/." << std::endl;
+	std::cout << "Server protocol: " << CLIENT_VERSION_UPPER << "." << CLIENT_VERSION_LOWER << std::endl;
 	std::cout << std::endl;
 
 	// check if config.lua or config.lua.dist exist
@@ -199,7 +207,7 @@ void mainLoader(int, char*[], ServiceManager* services)
 
 	// load item data
 	std::cout << ">> Loading items" << std::endl;
-	if (!Item::items.loadFromOtb("data/items/items.otb")) {
+	if (!Item::items.loadFromOtb("data/items/" + std::to_string(CLIENT_VERSION) + "/items.otb")) {
 		startupErrorMessage("Unable to load items (OTB)!");
 		return;
 	}
@@ -212,6 +220,12 @@ void mainLoader(int, char*[], ServiceManager* services)
 	std::cout << ">> Loading script systems" << std::endl;
 	if (!ScriptingManager::getInstance().loadScriptSystems()) {
 		startupErrorMessage("Failed to load script systems");
+		return;
+	}
+
+	std::cout << ">> Loading modules" << std::endl;
+	if (!g_modules.load()) {
+		startupErrorMessage("Failed to load modules");
 		return;
 	}
 
@@ -292,8 +306,10 @@ void mainLoader(int, char*[], ServiceManager* services)
 
 	g_game.map.houses.payHouses(rentPeriod);
 
+#if GAME_FEATURE_MARKET > 0
 	IOMarket::checkExpiredOffers();
 	IOMarket::getInstance().updateStatistics();
+#endif
 
 	std::cout << ">> Loaded all modules, server starting up..." << std::endl;
 

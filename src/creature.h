@@ -1,6 +1,6 @@
 /**
  * The Forgotten Server - a free and open-source MMORPG server emulator
- * Copyright (C) 2019  Mark Samman <mark.samman@gmail.com>
+ * Copyright (C) 2020  Mark Samman <mark.samman@gmail.com>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -28,8 +28,8 @@
 #include "enums.h"
 #include "creatureevent.h"
 
-using ConditionList = std::list<Condition*>;
-using CreatureEventList = std::list<CreatureEvent*>;
+using ConditionList = std::vector<Condition*>;
+using CreatureEventList = std::vector<CreatureEvent*>;
 
 enum slots_t : uint8_t {
 	CONST_SLOT_WHEREEVER = 0,
@@ -44,8 +44,17 @@ enum slots_t : uint8_t {
 	CONST_SLOT_RING = 9,
 	CONST_SLOT_AMMO = 10,
 
-	CONST_SLOT_FIRST = CONST_SLOT_HEAD,
+	#if GAME_FEATURE_STORE_INBOX > 0
+	CONST_SLOT_STORE_INBOX = 11,
+	CONST_SLOT_LAST = CONST_SLOT_STORE_INBOX,
+	#elif GAME_FEATURE_PURSE_SLOT > 0
+	CONST_SLOT_PURSE = 11,
+	CONST_SLOT_LAST = CONST_SLOT_PURSE,
+	#else
 	CONST_SLOT_LAST = CONST_SLOT_AMMO,
+	#endif
+
+	CONST_SLOT_FIRST = CONST_SLOT_HEAD,
 };
 
 struct FindPathParams {
@@ -286,7 +295,7 @@ class Creature : virtual public Thing
 			return master;
 		}
 
-		const std::list<Creature*>& getSummons() const {
+		const std::vector<Creature*>& getSummons() const {
 			return summons;
 		}
 
@@ -477,7 +486,7 @@ class Creature : virtual public Thing
 		using CountMap = std::map<uint32_t, CountBlock_t>;
 		CountMap damageMap;
 
-		std::list<Creature*> summons;
+		std::vector<Creature*> summons;
 		CreatureEventList eventsList;
 		ConditionList conditions;
 
@@ -487,12 +496,12 @@ class Creature : virtual public Thing
 		Creature* attackedCreature = nullptr;
 		Creature* master = nullptr;
 		Creature* followCreature = nullptr;
+		uint64_t eventWalk = 0;
 
 		uint64_t lastStep = 0;
 		uint32_t referenceCounter = 0;
 		uint32_t id = 0;
 		uint32_t scriptEventsBitField = 0;
-		uint32_t eventWalk = 0;
 		uint32_t walkUpdateTicks = 0;
 		uint32_t lastHitCreatureId = 0;
 		uint32_t blockCount = 0;
@@ -530,7 +539,13 @@ class Creature : virtual public Thing
 		bool hasEventRegistered(CreatureEventType_t event) const {
 			return (0 != (scriptEventsBitField & (static_cast<uint32_t>(1) << event)));
 		}
+		void resetEventsRegistered() {
+			scriptEventsBitField = 0;
+		}
 		CreatureEventList getCreatureEvents(CreatureEventType_t type);
+		CreatureEventList& getCreatureEvents() {
+			return eventsList;
+		}
 
 		void updateMapCache();
 		void updateTileCache(const Tile* tile, int32_t dx, int32_t dy);

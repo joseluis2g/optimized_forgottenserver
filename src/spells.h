@@ -1,6 +1,6 @@
 /**
  * The Forgotten Server - a free and open-source MMORPG server emulator
- * Copyright (C) 2019  Mark Samman <mark.samman@gmail.com>
+ * Copyright (C) 2020  Mark Samman <mark.samman@gmail.com>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -44,6 +44,7 @@ class Spells final : public BaseEvents
 		Spells(const Spells&) = delete;
 		Spells& operator=(const Spells&) = delete;
 
+		std::vector<uint16_t> getSpellsByVocation(uint16_t vocationId);
 		Spell* getSpellByName(const std::string& name);
 		RuneSpell* getRuneSpell(uint32_t id);
 		RuneSpell* getRuneSpellByName(const std::string& name);
@@ -58,9 +59,15 @@ class Spells final : public BaseEvents
 		static Position getCasterPosition(Creature* creature, Direction dir);
 		std::string getScriptBaseName() const override;
 
-		const std::unordered_map<std::string, InstantSpell>& getInstantSpells() const {
+		#if GAME_FEATURE_ROBINHOOD_HASH_MAP > 0
+		const robin_hood::unordered_map<std::string, InstantSpell_ptr>& getInstantSpells() const {
 			return instants;
 		};
+		#else
+		const std::unordered_map<std::string, InstantSpell_ptr>& getInstantSpells() const {
+			return instants;
+		};
+		#endif
 
 		void clearMaps(bool fromLua);
 		void clear(bool fromLua) override final;
@@ -73,7 +80,11 @@ class Spells final : public BaseEvents
 		bool registerEvent(Event_ptr event, const pugi::xml_node& node) override;
 
 		std::map<uint16_t, RuneSpell> runes;
-		std::unordered_map<std::string, InstantSpell> instants;
+		#if GAME_FEATURE_ROBINHOOD_HASH_MAP > 0
+		robin_hood::unordered_map<std::string, InstantSpell_ptr> instants;
+		#else
+		std::unordered_map<std::string, InstantSpell_ptr> instants;
+		#endif
 
 		friend class CombatSpell;
 		LuaScriptInterface scriptInterface { "Spell Interface" };
@@ -314,7 +325,6 @@ class Spell : public BaseSpell
 		bool needTarget = false;
 
 	private:
-
 		uint32_t mana = 0;
 		uint32_t manaPercent = 0;
 		uint32_t soul = 0;

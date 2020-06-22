@@ -1,6 +1,6 @@
 /**
  * The Forgotten Server - a free and open-source MMORPG server emulator
- * Copyright (C) 2019  Mark Samman <mark.samman@gmail.com>
+ * Copyright (C) 2020  Mark Samman <mark.samman@gmail.com>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -55,7 +55,7 @@ class Guild
 			memberCount = count;
 		}
 
-		const std::vector<GuildRank>& getRanks() const {
+		const std::forward_list<GuildRank>& getRanks() const {
 			return ranks;
 		}
 		GuildRank* getRankById(uint32_t rankId);
@@ -72,7 +72,7 @@ class Guild
 
 	private:
 		std::list<Player*> membersOnline;
-		std::vector<GuildRank> ranks;
+		std::forward_list<GuildRank> ranks;
 		std::string name;
 		std::string motd;
 		uint32_t id;

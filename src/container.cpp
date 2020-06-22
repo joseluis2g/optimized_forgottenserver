@@ -1,6 +1,6 @@
 /**
  * The Forgotten Server - a free and open-source MMORPG server emulator
- * Copyright (C) 2019  Mark Samman <mark.samman@gmail.com>
+ * Copyright (C) 2020  Mark Samman <mark.samman@gmail.com>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -35,6 +35,7 @@ Container::Container(uint16_t type, uint16_t size, bool unlocked /*= true*/, boo
 	pagination(pagination)
 {}
 
+#if GAME_FEATURE_BROWSEFIELD > 0
 Container::Container(Tile* tile) : Container(ITEM_BROWSEFIELD, 30, false, true)
 {
 	TileItemVector* itemVector = tile->getItemList();
@@ -49,9 +50,11 @@ Container::Container(Tile* tile) : Container(ITEM_BROWSEFIELD, 30, false, true)
 
 	setParent(tile);
 }
+#endif
 
 Container::~Container()
 {
+	#if GAME_FEATURE_BROWSEFIELD > 0
 	if (getID() == ITEM_BROWSEFIELD) {
 		g_game.browseFields.erase(getTile());
 		for (Item* item : itemlist) {
@@ -63,6 +66,12 @@ Container::~Container()
 			item->decrementReferenceCounter();
 		}
 	}
+	#else
+	for (Item* item : itemlist) {
+		item->setParent(nullptr);
+		item->decrementReferenceCounter();
+	}
+	#endif
 }
 
 Item* Container::clone() const
@@ -86,7 +95,11 @@ Container* Container::getParentContainer()
 
 bool Container::hasParent() const
 {
+	#if GAME_FEATURE_BROWSEFIELD > 0
 	return getID() != ITEM_BROWSEFIELD && dynamic_cast<const Player*>(getParent()) == nullptr;
+	#else
+	return dynamic_cast<const Container*>(getParent()) != nullptr;
+	#endif
 }
 
 void Container::addItem(Item* item)
@@ -106,9 +119,9 @@ Attr_ReadValue Container::readAttr(AttrTypes_t attr, PropStream& propStream)
 	return Item::readAttr(attr, propStream);
 }
 
-bool Container::unserializeItemNode(OTB::Loader& loader, const OTB::Node& node, PropStream& propStream)
+bool Container::unserializeItemNode(OTB::Loader& loader, const OTB::Node& node, PropStream& propStream, bool _legacy)
 {
-	bool ret = Item::unserializeItemNode(loader, node, propStream);
+	bool ret = Item::unserializeItemNode(loader, node, propStream, _legacy);
 	if (!ret) {
 		return false;
 	}
@@ -125,12 +138,12 @@ bool Container::unserializeItemNode(OTB::Loader& loader, const OTB::Node& node, 
 			return false;
 		}
 
-		Item* item = Item::CreateItem(itemPropStream);
+		Item* item = (_legacy ? Item::CreateItem_legacy(itemPropStream) : Item::CreateItem(itemPropStream));
 		if (!item) {
 			return false;
 		}
 
-		if (!item->unserializeItemNode(loader, itemNode, itemPropStream)) {
+		if (!item->unserializeItemNode(loader, itemNode, itemPropStream, _legacy)) {
 			return false;
 		}
 
@@ -156,11 +169,12 @@ uint32_t Container::getWeight() const
 
 std::string Container::getContentDescription() const
 {
-	std::ostringstream os;
-	return getContentDescription(os).str();
+	std::string sink;
+	sink.reserve(1024);
+	return getContentDescription(sink);
 }
 
-std::ostringstream& Container::getContentDescription(std::ostringstream& os) const
+std::string& Container::getContentDescription(std::string& sink) const
 {
 	bool firstitem = true;
 	for (ContainerIterator it = iterator(); it.hasNext(); it.advance()) {
@@ -174,16 +188,20 @@ std::ostringstream& Container::getContentDescription(std::ostringstream& os) con
 		if (firstitem) {
 			firstitem = false;
 		} else {
-			os << ", ";
+			sink.append(", ");
 		}
 
-		os << item->getNameDescription();
+		#if CLIENT_VERSION >= 1200
+		sink.append(1, '{').append(std::to_string(static_cast<uint32_t>(item->getClientID()))).append(1, '|').append(item->getNameDescription()).append(1, '}');
+		#else
+		sink.append(item->getNameDescription());
+		#endif
 	}
 
 	if (firstitem) {
-		os << "nothing";
+		sink.append("nothing");
 	}
-	return os;
+	return sink;
 }
 
 Item* Container::getItemByIndex(size_t index) const
@@ -215,7 +233,7 @@ bool Container::isHoldingItem(const Item* item) const
 
 void Container::onAddContainerItem(Item* item)
 {
-	SpectatorHashSet spectators;
+	SpectatorVector spectators;
 	g_game.map.getSpectators(spectators, getPosition(), false, true, 2, 2, 2, 2);
 
 	//send to client
@@ -231,7 +249,7 @@ void Container::onAddContainerItem(Item* item)
 
 void Container::onUpdateContainerItem(uint32_t index, Item* oldItem, Item* newItem)
 {
-	SpectatorHashSet spectators;
+	SpectatorVector spectators;
 	g_game.map.getSpectators(spectators, getPosition(), false, true, 2, 2, 2, 2);
 
 	//send to client
@@ -247,7 +265,7 @@ void Container::onUpdateContainerItem(uint32_t index, Item* oldItem, Item* newIt
 
 void Container::onRemoveContainerItem(uint32_t index, Item* item)
 {
-	SpectatorHashSet spectators;
+	SpectatorVector spectators;
 	g_game.map.getSpectators(spectators, getPosition(), false, true, 2, 2, 2, 2);
 
 	//send change to client
@@ -279,6 +297,16 @@ ReturnValue Container::queryAdd(int32_t index, const Thing& thing, uint32_t coun
 	if (item == nullptr) {
 		return RETURNVALUE_NOTPOSSIBLE;
 	}
+
+	#if GAME_FEATURE_STORE_INBOX > 0
+	if (getID() == ITEM_STORE_INBOX && !hasBitSet(FLAG_NOLIMIT, flags)) {
+		return RETURNVALUE_THISISIMPOSSIBLE;
+	}
+	#elif GAME_FEATURE_PURSE_SLOT > 0
+	if (getID() == ITEM_PURSE && item->getID() != ITEM_PREMIUM_SCROLL) {
+		return RETURNVALUE_THISISIMPOSSIBLE;
+	}
+	#endif
 
 	if (!item->isPickupable()) {
 		return RETURNVALUE_CANNOTPICKUP;
@@ -679,8 +707,17 @@ void Container::internalAddThing(uint32_t, Thing* thing)
 
 void Container::startDecaying()
 {
+	g_game.startDecay(this);
 	for (ContainerIterator it = iterator(); it.hasNext(); it.advance()) {
 		g_game.startDecay(*it);
+	}
+}
+
+void Container::stopDecaying()
+{
+	g_game.stopDecay(this);
+	for (ContainerIterator it = iterator(); it.hasNext(); it.advance()) {
+		g_game.stopDecay(*it);
 	}
 }
 

@@ -1,6 +1,6 @@
 /**
  * The Forgotten Server - a free and open-source MMORPG server emulator
- * Copyright (C) 2019  Mark Samman <mark.samman@gmail.com>
+ * Copyright (C) 2020  Mark Samman <mark.samman@gmail.com>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -22,19 +22,44 @@
 #include "configmanager.h"
 #include "database.h"
 
+#ifdef __has_include
+
+#if __has_include(<mysql/errmsg.h>)
+#include <mysql/errmsg.h>
+#elif __has_include(<errmsg.h>)
 #include <errmsg.h>
+#else
+#error "Cannot detect mysql library"
+#endif
+
+#else
+#include <errmsg.h>
+#endif
 
 extern ConfigManager g_config;
 
-Database::~Database()
+bool Database::init()
 {
-	if (handle != nullptr) {
-		mysql_close(handle);
+	if (mysql_library_init(0, NULL, NULL) != 0) {
+		std::cout << std::endl << "Failed to initialize MySQL client library." << std::endl;
+		return false;
 	}
+	return true;
+}
+
+void Database::end()
+{
+	mysql_library_end();
 }
 
 bool Database::connect()
 {
+	// thread-specific variables initialization
+	if (mysql_thread_init() != 0) {
+		std::cout << std::endl << "Failed to initialize MySQL thread-specific variables." << std::endl;
+		return false;
+	}
+
 	// connection handle initialization
 	handle = mysql_init(nullptr);
 	if (!handle) {
@@ -59,13 +84,22 @@ bool Database::connect()
 	return true;
 }
 
+void Database::disconnect()
+{
+	if (handle != nullptr) {
+		mysql_close(handle);
+		handle = nullptr;
+	}
+
+	mysql_thread_end();
+}
+
 bool Database::beginTransaction()
 {
 	if (!executeQuery("BEGIN")) {
 		return false;
 	}
 
-	databaseLock.lock();
 	return true;
 }
 
@@ -73,11 +107,9 @@ bool Database::rollback()
 {
 	if (mysql_rollback(handle) != 0) {
 		std::cout << "[Error - mysql_rollback] Message: " << mysql_error(handle) << std::endl;
-		databaseLock.unlock();
 		return false;
 	}
 
-	databaseLock.unlock();
 	return true;
 }
 
@@ -85,11 +117,9 @@ bool Database::commit()
 {
 	if (mysql_commit(handle) != 0) {
 		std::cout << "[Error - mysql_commit] Message: " << mysql_error(handle) << std::endl;
-		databaseLock.unlock();
 		return false;
 	}
 
-	databaseLock.unlock();
 	return true;
 }
 
@@ -98,8 +128,6 @@ bool Database::executeQuery(const std::string& query)
 	bool success = true;
 
 	// executes the query
-	databaseLock.lock();
-
 	while (mysql_real_query(handle, query.c_str(), query.length()) != 0) {
 		std::cout << "[Error - mysql_real_query] Query: " << query.substr(0, 256) << std::endl << "Message: " << mysql_error(handle) << std::endl;
 		auto error = mysql_errno(handle);
@@ -111,8 +139,6 @@ bool Database::executeQuery(const std::string& query)
 	}
 
 	MYSQL_RES* m_res = mysql_store_result(handle);
-	databaseLock.unlock();
-
 	if (m_res) {
 		mysql_free_result(m_res);
 	}
@@ -122,8 +148,6 @@ bool Database::executeQuery(const std::string& query)
 
 DBResult_ptr Database::storeQuery(const std::string& query)
 {
-	databaseLock.lock();
-
 	retry:
 	while (mysql_real_query(handle, query.c_str(), query.length()) != 0) {
 		std::cout << "[Error - mysql_real_query] Query: " << query << std::endl << "Message: " << mysql_error(handle) << std::endl;
@@ -141,12 +165,10 @@ DBResult_ptr Database::storeQuery(const std::string& query)
 		std::cout << "[Error - mysql_store_result] Query: " << query << std::endl << "Message: " << mysql_error(handle) << std::endl;
 		auto error = mysql_errno(handle);
 		if (error != CR_SERVER_LOST && error != CR_SERVER_GONE_ERROR && error != CR_CONN_HOST_ERROR && error != 1053/*ER_SERVER_SHUTDOWN*/ && error != CR_CONNECTION_ERROR) {
-			databaseLock.unlock();
 			return nullptr;
 		}
 		goto retry;
 	}
-	databaseLock.unlock();
 
 	// retrieving results of query
 	DBResult_ptr result = std::make_shared<DBResult>(res);

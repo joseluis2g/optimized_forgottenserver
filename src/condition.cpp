@@ -1,6 +1,6 @@
 /**
  * The Forgotten Server - a free and open-source MMORPG server emulator
- * Copyright (C) 2019  Mark Samman <mark.samman@gmail.com>
+ * Copyright (C) 2020  Mark Samman <mark.samman@gmail.com>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -373,6 +373,8 @@ bool ConditionAttributes::unserializeProp(ConditionAttr_t attr, PropStream& prop
 		return propStream.read<int32_t>(skills[currentSkill++]);
 	} else if (attr == CONDITIONATTR_STATS) {
 		return propStream.read<int32_t>(stats[currentStat++]);
+	} else if (attr == CONDITIONATTR_DISABLEDEFENSE) {
+		return propStream.read<bool>(disableDefense);
 	}
 	return Condition::unserializeProp(attr, propStream);
 }
@@ -390,6 +392,9 @@ void ConditionAttributes::serialize(PropWriteStream& propWriteStream)
 		propWriteStream.write<uint8_t>(CONDITIONATTR_STATS);
 		propWriteStream.write<int32_t>(stats[i]);
 	}
+
+	propWriteStream.write<uint8_t>(CONDITIONATTR_DISABLEDEFENSE);
+	propWriteStream.write<bool>(disableDefense);
 }
 
 bool ConditionAttributes::startCondition(Creature* creature)
@@ -445,7 +450,12 @@ void ConditionAttributes::updateStats(Player* player)
 	}
 
 	if (needUpdateStats) {
-		player->sendStats();
+		#if CLIENT_VERSION >= 1200
+		//We have magic level in skills now so we need to send skills update too here
+		player->addScheduledUpdates((PlayerUpdate_Stats | PlayerUpdate_Skills));
+		#else
+		player->addScheduledUpdates(PlayerUpdate_Stats);
+		#endif
 	}
 }
 
@@ -480,7 +490,7 @@ void ConditionAttributes::updateSkills(Player* player)
 	}
 
 	if (needUpdateSkills) {
-		player->sendSkills();
+		player->addScheduledUpdates(PlayerUpdate_Skills);
 	}
 }
 
@@ -510,7 +520,7 @@ void ConditionAttributes::endCondition(Creature* creature)
 		}
 
 		if (needUpdateSkills) {
-			player->sendSkills();
+			player->addScheduledUpdates(PlayerUpdate_Skills);
 		}
 
 		bool needUpdateStats = false;
@@ -523,7 +533,12 @@ void ConditionAttributes::endCondition(Creature* creature)
 		}
 
 		if (needUpdateStats) {
-			player->sendStats();
+			#if CLIENT_VERSION >= 1200
+			//We have magic level in skills now so we need to send skills update too here
+			player->addScheduledUpdates((PlayerUpdate_Stats | PlayerUpdate_Skills));
+			#else
+			player->addScheduledUpdates(PlayerUpdate_Stats);
+			#endif
 		}
 	}
 
@@ -764,7 +779,7 @@ bool ConditionRegeneration::executeCondition(Creature* creature, int32_t interva
 				message.primary.color = TEXTCOLOR_MAYABLUE;
 				player->sendTextMessage(message);
 
-				SpectatorHashSet spectators;
+				SpectatorVector spectators;
 				g_game.map.getSpectators(spectators, player->getPosition(), false, true);
 				spectators.erase(player);
 				if (!spectators.empty()) {
@@ -795,7 +810,7 @@ bool ConditionRegeneration::executeCondition(Creature* creature, int32_t interva
 				message.primary.color = TEXTCOLOR_MAYABLUE;
 				player->sendTextMessage(message);
 
-				SpectatorHashSet spectators;
+				SpectatorVector spectators;
 				g_game.map.getSpectators(spectators, player->getPosition(), false, true);
 				spectators.erase(player);
 				if (!spectators.empty()) {
@@ -1608,6 +1623,10 @@ bool ConditionLight::unserializeProp(ConditionAttr_t attr, PropStream& propStrea
 
 		lightInfo.level = value;
 		return true;
+	} else if (attr == CONDITIONATTR_LIGHTCOLOR_8B) {
+		return propStream.read<uint8_t>(lightInfo.color);
+	} else if (attr == CONDITIONATTR_LIGHTLEVEL_8B) {
+		return propStream.read<uint8_t>(lightInfo.level);
 	} else if (attr == CONDITIONATTR_LIGHTTICKS) {
 		return propStream.read<uint32_t>(internalLightTicks);
 	} else if (attr == CONDITIONATTR_LIGHTINTERVAL) {
@@ -1620,14 +1639,11 @@ void ConditionLight::serialize(PropWriteStream& propWriteStream)
 {
 	Condition::serialize(propWriteStream);
 
-	// TODO: color and level could be serialized as 8-bit if we can retain backwards
-	// compatibility, but perhaps we should keep it like this in case they increase
-	// in the future...
-	propWriteStream.write<uint8_t>(CONDITIONATTR_LIGHTCOLOR);
-	propWriteStream.write<uint32_t>(lightInfo.color);
+	propWriteStream.write<uint8_t>(CONDITIONATTR_LIGHTCOLOR_8B);
+	propWriteStream.write<uint8_t>(lightInfo.color);
 
-	propWriteStream.write<uint8_t>(CONDITIONATTR_LIGHTLEVEL);
-	propWriteStream.write<uint32_t>(lightInfo.level);
+	propWriteStream.write<uint8_t>(CONDITIONATTR_LIGHTLEVEL_8B);
+	propWriteStream.write<uint8_t>(lightInfo.level);
 
 	propWriteStream.write<uint8_t>(CONDITIONATTR_LIGHTTICKS);
 	propWriteStream.write<uint32_t>(internalLightTicks);
@@ -1641,12 +1657,16 @@ void ConditionSpellCooldown::addCondition(Creature* creature, const Condition* c
 	if (updateCondition(condition)) {
 		setTicks(condition->getTicks());
 
+		#if CLIENT_VERSION >= 870
 		if (subId != 0 && ticks > 0) {
 			Player* player = creature->getPlayer();
 			if (player) {
 				player->sendSpellCooldown(subId, ticks);
 			}
 		}
+		#else
+		(void)creature;
+		#endif
 	}
 }
 
@@ -1656,12 +1676,16 @@ bool ConditionSpellCooldown::startCondition(Creature* creature)
 		return false;
 	}
 
+	#if CLIENT_VERSION >= 870
 	if (subId != 0 && ticks > 0) {
 		Player* player = creature->getPlayer();
 		if (player) {
 			player->sendSpellCooldown(subId, ticks);
 		}
 	}
+	#else
+	(void)creature;
+	#endif
 	return true;
 }
 
@@ -1670,12 +1694,16 @@ void ConditionSpellGroupCooldown::addCondition(Creature* creature, const Conditi
 	if (updateCondition(condition)) {
 		setTicks(condition->getTicks());
 
+		#if CLIENT_VERSION >= 870
 		if (subId != 0 && ticks > 0) {
 			Player* player = creature->getPlayer();
 			if (player) {
 				player->sendSpellGroupCooldown(static_cast<SpellGroup_t>(subId), ticks);
 			}
 		}
+		#else
+		(void)creature;
+		#endif
 	}
 }
 
@@ -1685,11 +1713,15 @@ bool ConditionSpellGroupCooldown::startCondition(Creature* creature)
 		return false;
 	}
 
+	#if CLIENT_VERSION >= 870
 	if (subId != 0 && ticks > 0) {
 		Player* player = creature->getPlayer();
 		if (player) {
 			player->sendSpellGroupCooldown(static_cast<SpellGroup_t>(subId), ticks);
 		}
 	}
+	#else
+	(void)creature;
+	#endif
 	return true;
 }

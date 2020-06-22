@@ -1,6 +1,6 @@
 /**
  * The Forgotten Server - a free and open-source MMORPG server emulator
- * Copyright (C) 2019  Mark Samman <mark.samman@gmail.com>
+ * Copyright (C) 2020  Mark Samman <mark.samman@gmail.com>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -31,6 +31,12 @@ std::string Mission::getDescription(Player* player) const
 	if (!mainDescription.empty()) {
 		std::string desc = mainDescription;
 		replaceString(desc, "|STATE|", std::to_string(value));
+
+		for (const auto& missionState : states) {
+			player->getStorageValue(missionState.second, value);
+			replaceString(desc, (std::string("|STATE") + std::to_string(missionState.first) + std::string("|")), std::to_string(std::max<int32_t>(value, 0)));
+		}
+
 		replaceString(desc, "\\n", "\n");
 		return desc;
 	}
@@ -185,10 +191,77 @@ bool Quests::loadFromXml()
 			} else {
 				mission.mainDescription = mainDescription;
 			}
+
+			int32_t stateId = 0;
+			while (true) {
+				pugi::xml_attribute stateAttribute = missionNode.attribute((std::string("state") + std::to_string(stateId)).c_str());
+				if (stateAttribute) {
+					mission.states.emplace_back(stateId, pugi::cast<uint32_t>(stateAttribute.value()));
+				} else if (stateId > 0) {
+					break;
+				}
+				++stateId;
+			}
+
+			#if GAME_FEATURE_QUEST_TRACKER > 0
+			pugi::xml_attribute idAttribute = missionNode.attribute("id");
+			if (idAttribute) {
+				mission.setMissionId(pugi::cast<uint16_t>(idAttribute.value()));
+			} else {
+				std::cout << "[Warning - Quests::loadFromXml] Missing id in mission: " << missionNode.attribute("name").as_string() << std::endl;
+			}
+			mission.setQuestId(id);
+			#endif
 		}
 	}
+	makeCache();
 	return true;
 }
+
+void Quests::makeCache()
+{
+	cachedLogQuests.clear();
+	cachedLogMissions.clear();
+	#if GAME_FEATURE_QUEST_TRACKER > 0
+	cachedMissions.clear();
+	#endif
+
+	for (const Quest& quest : quests) {
+		cachedLogQuests[quest.getStartStorageId()].push_back(&quest);
+		for (const Mission& mission : quest.getMissions()) {
+			cachedLogMissions[mission.getStorageId()].push_back(&mission);
+			for (const auto& missionState : mission.states) {
+				cachedLogMissions[missionState.second].push_back(&mission);
+			}
+
+			#if GAME_FEATURE_QUEST_TRACKER > 0
+			cachedMissions[mission.getMissionId()] = &mission;
+			#endif
+		}
+	}
+}
+
+#if GAME_FEATURE_QUEST_TRACKER > 0
+static std::vector<const Mission*> dummyMissions;
+
+std::vector<const Mission*>& Quests::getMissions(uint32_t key)
+{
+	auto mit = cachedLogMissions.find(key);
+	if (mit != cachedLogMissions.end()) {
+		return mit->second;
+	}
+	return dummyMissions;
+}
+
+const Mission* Quests::getMissionByID(uint16_t id)
+{
+	auto it = cachedMissions.find(id);
+	if (it != cachedMissions.end()) {
+		return it->second;
+	}
+	return nullptr;
+}
+#endif
 
 Quest* Quests::getQuestByID(uint16_t id)
 {
@@ -213,14 +286,20 @@ uint16_t Quests::getQuestsCount(Player* player) const
 
 bool Quests::isQuestStorage(const uint32_t key, const int32_t value, const int32_t oldValue) const
 {
-	for (const Quest& quest : quests) {
-		if (quest.getStartStorageId() == key && quest.getStartStorageValue() == value) {
-			return true;
+	auto qit = cachedLogQuests.find(key);
+	if (qit != cachedLogQuests.end()) {
+		for (const Quest* quest : qit->second) {
+			if (quest->getStartStorageValue() == value) {
+				return true;
+			}
 		}
+	}
 
-		for (const Mission& mission : quest.getMissions()) {
-			if (mission.getStorageId() == key && value >= mission.getStartStorageValue() && value <= mission.getEndStorageValue()) {
-				return mission.mainDescription.empty() || oldValue < mission.getStartStorageValue() || oldValue > mission.getEndStorageValue();
+	auto mit = cachedLogMissions.find(key);
+	if (mit != cachedLogMissions.end()) {
+		for (const Mission* mission : mit->second) {
+			if (mission->getStorageId() == key && value >= mission->getStartStorageValue() && value <= mission->getEndStorageValue()) {
+				return mission->mainDescription.empty() || oldValue < mission->getStartStorageValue() || oldValue > mission->getEndStorageValue();
 			}
 		}
 	}

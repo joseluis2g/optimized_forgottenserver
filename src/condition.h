@@ -1,6 +1,6 @@
 /**
  * The Forgotten Server - a free and open-source MMORPG server emulator
- * Copyright (C) 2019  Mark Samman <mark.samman@gmail.com>
+ * Copyright (C) 2020  Mark Samman <mark.samman@gmail.com>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -43,8 +43,8 @@ enum ConditionAttr_t {
 	CONDITIONATTR_FORMULA_MINB,
 	CONDITIONATTR_FORMULA_MAXA,
 	CONDITIONATTR_FORMULA_MAXB,
-	CONDITIONATTR_LIGHTCOLOR,
-	CONDITIONATTR_LIGHTLEVEL,
+	CONDITIONATTR_LIGHTCOLOR, // unused - backward compatibility
+	CONDITIONATTR_LIGHTLEVEL, // unused - backward compatibility
 	CONDITIONATTR_LIGHTTICKS,
 	CONDITIONATTR_LIGHTINTERVAL,
 	CONDITIONATTR_SOULTICKS,
@@ -55,6 +55,9 @@ enum ConditionAttr_t {
 	CONDITIONATTR_PERIODDAMAGE,
 	CONDITIONATTR_ISBUFF,
 	CONDITIONATTR_SUBID,
+	CONDITIONATTR_DISABLEDEFENSE,
+	CONDITIONATTR_LIGHTCOLOR_8B,
+	CONDITIONATTR_LIGHTLEVEL_8B,
 
 	//reserved for serialization
 	CONDITIONATTR_END = 254,
@@ -89,6 +92,9 @@ class Condition
 
 		virtual Condition* clone() const = 0;
 
+		void setType(ConditionType_t newType) {
+			conditionType = newType;
+		}
 		ConditionType_t getType() const {
 			return conditionType;
 		}

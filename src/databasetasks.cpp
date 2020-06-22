@@ -1,6 +1,6 @@
 /**
  * The Forgotten Server - a free and open-source MMORPG server emulator
- * Copyright (C) 2019  Mark Samman <mark.samman@gmail.com>
+ * Copyright (C) 2020  Mark Samman <mark.samman@gmail.com>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -24,18 +24,17 @@
 
 extern Dispatcher g_dispatcher;
 
-void DatabaseTasks::start()
-{
-	db.connect();
-	ThreadHolder::start();
-}
-
 void DatabaseTasks::threadMain()
 {
 	std::unique_lock<std::mutex> taskLockUnique(taskLock, std::defer_lock);
+	db.connect();
+
 	while (getState() != THREAD_STATE_TERMINATED) {
 		taskLockUnique.lock();
 		if (tasks.empty()) {
+			if (flushTasks) {
+				flushSignal.notify_one();
+			}
 			taskSignal.wait(taskLockUnique);
 		}
 
@@ -48,6 +47,8 @@ void DatabaseTasks::threadMain()
 			taskLockUnique.unlock();
 		}
 	}
+
+	db.disconnect();
 }
 
 void DatabaseTasks::addTask(std::string query, std::function<void(DBResult_ptr, bool)> callback/* = nullptr*/, bool store/* = false*/)
@@ -78,27 +79,23 @@ void DatabaseTasks::runTask(const DatabaseTask& task)
 	}
 
 	if (task.callback) {
-		g_dispatcher.addTask(createTask(std::bind(task.callback, result, success)));
+		g_dispatcher.addTask(std::bind(task.callback, result, success));
 	}
 }
 
 void DatabaseTasks::flush()
 {
 	std::unique_lock<std::mutex> guard{ taskLock };
-	while (!tasks.empty()) {
-		auto task = std::move(tasks.front());
-		tasks.pop_front();
-		guard.unlock();
-		runTask(task);
-		guard.lock();
+	if (!tasks.empty()) {
+		flushTasks = true;
+		flushSignal.wait(guard);
+		flushTasks = false;
 	}
 }
 
 void DatabaseTasks::shutdown()
 {
-	taskLock.lock();
-	setState(THREAD_STATE_TERMINATED);
-	taskLock.unlock();
 	flush();
+	setState(THREAD_STATE_TERMINATED);
 	taskSignal.notify_one();
 }

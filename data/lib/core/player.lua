@@ -21,6 +21,16 @@ function Player.feed(self, food)
 	return true
 end
 
+function Player.addLevel(self, amount, round)
+	local experience, level, amount = 0, self:getLevel(), amount or 1
+	if(amount > 0) then
+		experience = getExperienceForLevel(level + amount) - (round and self:getExperience() or getExperienceForLevel(level))
+	else
+		experience = -((round and self:getExperience() or getExperienceForLevel(level)) - getExperienceForLevel(level + amount))
+	end
+	return self:addExperience(experience)
+end
+
 function Player.getClosestFreePosition(self, position, extended)
 	if self:getGroup():getAccess() and self:getAccountType() >= ACCOUNT_TYPE_GOD then
 		return position
@@ -64,6 +74,10 @@ function Player.sendCancelMessage(self, message)
 		message = Game.getReturnMessage(message)
 	end
 	return self:sendTextMessage(MESSAGE_STATUS_SMALL, message)
+end
+
+function Player.isUsingTFC(self)
+	return self:getClient().tfcos >= CLIENTOS_TFC_ANDROID
 end
 
 function Player.isUsingOtClient(self)

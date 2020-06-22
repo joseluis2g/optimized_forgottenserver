@@ -1,6 +1,6 @@
 /**
  * The Forgotten Server - a free and open-source MMORPG server emulator
- * Copyright (C) 2019  Mark Samman <mark.samman@gmail.com>
+ * Copyright (C) 2020  Mark Samman <mark.samman@gmail.com>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -46,7 +46,9 @@ Creature::~Creature()
 	}
 
 	for (Condition* condition : conditions) {
-		condition->endCondition(this);
+		if (condition->getType() != CONDITION_NONE) { // Check if already ended
+			condition->endCondition(this);
+		}
 		delete condition;
 	}
 }
@@ -410,11 +412,7 @@ void Creature::onCreatureAppear(Creature* creature, bool isLogin)
 void Creature::onRemoveCreature(Creature* creature, bool)
 {
 	onCreatureDisappear(creature, true);
-	if (creature == this) {
-		if (master && !master->isRemoved()) {
-			setMaster(nullptr);
-		}
-	} else if (isMapLoaded) {
+	if (creature != this && isMapLoaded) {
 		if (creature->getPosition().z == getPosition().z) {
 			updateTileCache(creature->getTile(), creature->getPosition());
 		}
@@ -469,11 +467,11 @@ void Creature::onCreatureMove(Creature* creature, const Tile* newTile, const Pos
 
 		if (!summons.empty()) {
 			//check if any of our summons is out of range (+/- 2 floors or 30 tiles away)
-			std::forward_list<Creature*> despawnList;
+			std::vector<Creature*> despawnList;
 			for (Creature* summon : summons) {
 				const Position& pos = summon->getPosition();
 				if (Position::getDistanceZ(newPos, pos) > 2 || (std::max<int32_t>(Position::getDistanceX(newPos, pos), Position::getDistanceY(newPos, pos)) > 30)) {
-					despawnList.push_front(summon);
+					despawnList.push_back(summon);
 				}
 			}
 
@@ -584,7 +582,13 @@ void Creature::onCreatureMove(Creature* creature, const Tile* newTile, const Pos
 
 	if (creature == followCreature || (creature == this && followCreature)) {
 		if (hasFollowPath) {
-			isUpdatingPath = true;
+			if ((creature == followCreature) && listWalkDir.empty()) {
+				//This should make monsters more responsive without needing to decrease creature think interval
+				isUpdatingPath = false;
+				g_dispatcher.addTask(std::bind(&Game::updateCreatureWalk, &g_game, getID()));
+			} else {
+				isUpdatingPath = true;
+			}
 		}
 
 		if (newPos.z != oldPos.z || !canSee(followCreature->getPosition())) {
@@ -598,7 +602,7 @@ void Creature::onCreatureMove(Creature* creature, const Tile* newTile, const Pos
 		} else {
 			if (hasExtraSwing()) {
 				//our target is moving lets see if we can get in hit
-				g_dispatcher.addTask(createTask(std::bind(&Game::checkCreatureAttack, &g_game, getID())));
+				g_dispatcher.addTask(std::bind(&Game::checkCreatureAttack, &g_game, getID()));
 			}
 
 			if (newTile->getZone() != oldTile->getZone()) {
@@ -750,15 +754,13 @@ Item* Creature::getCorpse(Creature*, Creature*)
 
 void Creature::changeHealth(int32_t healthChange, bool sendHealthChange/* = true*/)
 {
-	int32_t oldHealth = health;
-
 	if (healthChange > 0) {
 		health += std::min<int32_t>(healthChange, getMaxHealth() - health);
 	} else {
 		health = std::max<int32_t>(0, health + healthChange);
 	}
 
-	if (sendHealthChange && oldHealth != health) {
+	if (sendHealthChange) {
 		g_game.addCreatureHealth(this);
 	}
 }
@@ -774,7 +776,6 @@ void Creature::gainHealth(Creature* healer, int32_t healthGain)
 void Creature::drainHealth(Creature* attacker, int32_t damage)
 {
 	changeHealth(-damage, false);
-
 	if (attacker) {
 		attacker->onAttackedCreatureDrainHealth(this, damage);
 	}
@@ -933,7 +934,8 @@ bool Creature::setFollowCreature(Creature* creature)
 		hasFollowPath = false;
 		forceUpdateFollowPath = false;
 		followCreature = creature;
-		isUpdatingPath = true;
+		isUpdatingPath = false;
+		g_dispatcher.addTask(std::bind(&Game::updateCreatureWalk, &g_game, getID()));
 	} else {
 		isUpdatingPath = false;
 		followCreature = nullptr;
@@ -1084,7 +1086,7 @@ void Creature::onGainExperience(uint64_t gainExp, Creature* target)
 	gainExp /= 2;
 	master->onGainExperience(gainExp, target);
 
-	SpectatorHashSet spectators;
+	SpectatorVector spectators;
 	g_game.map.getSpectators(spectators, position, false, true);
 	if (spectators.empty()) {
 		return;
@@ -1169,11 +1171,8 @@ bool Creature::addCombatCondition(Condition* condition)
 
 void Creature::removeCondition(ConditionType_t type, bool force/* = false*/)
 {
-	auto it = conditions.begin(), end = conditions.end();
-	while (it != end) {
-		Condition* condition = *it;
+	for (Condition* condition : conditions) {
 		if (condition->getType() != type) {
-			++it;
 			continue;
 		}
 
@@ -1185,22 +1184,16 @@ void Creature::removeCondition(ConditionType_t type, bool force/* = false*/)
 			}
 		}
 
-		it = conditions.erase(it);
-
+		condition->setType(CONDITION_NONE); // Safely schedule it to be removed
 		condition->endCondition(this);
-		delete condition;
-
 		onEndCondition(type);
 	}
 }
 
 void Creature::removeCondition(ConditionType_t type, ConditionId_t conditionId, bool force/* = false*/)
 {
-	auto it = conditions.begin(), end = conditions.end();
-	while (it != end) {
-		Condition* condition = *it;
+	for (Condition* condition : conditions) {
 		if (condition->getType() != type || condition->getId() != conditionId) {
-			++it;
 			continue;
 		}
 
@@ -1212,36 +1205,23 @@ void Creature::removeCondition(ConditionType_t type, ConditionId_t conditionId, 
 			}
 		}
 
-		it = conditions.erase(it);
-
+		condition->setType(CONDITION_NONE); // Safely schedule it to be removed
 		condition->endCondition(this);
-		delete condition;
-
 		onEndCondition(type);
 	}
 }
 
 void Creature::removeCombatCondition(ConditionType_t type)
 {
-	std::vector<Condition*> removeConditions;
 	for (Condition* condition : conditions) {
 		if (condition->getType() == type) {
-			removeConditions.push_back(condition);
+			onCombatRemoveCondition(condition);
 		}
-	}
-
-	for (Condition* condition : removeConditions) {
-		onCombatRemoveCondition(condition);
 	}
 }
 
 void Creature::removeCondition(Condition* condition, bool force/* = false*/)
 {
-	auto it = std::find(conditions.begin(), conditions.end(), condition);
-	if (it == conditions.end()) {
-		return;
-	}
-
 	if (!force && condition->getType() == CONDITION_PARALYZE) {
 		int64_t walkDelay = getWalkDelay();
 		if (walkDelay > 0) {
@@ -1250,11 +1230,10 @@ void Creature::removeCondition(Condition* condition, bool force/* = false*/)
 		}
 	}
 
-	conditions.erase(it);
-
+	ConditionType_t type = condition->getType();
+	condition->setType(CONDITION_NONE); // Safely schedule it to be removed
 	condition->endCondition(this);
-	onEndCondition(condition->getType());
-	delete condition;
+	onEndCondition(type);
 }
 
 Condition* Creature::getCondition(ConditionType_t type) const
@@ -1279,22 +1258,27 @@ Condition* Creature::getCondition(ConditionType_t type, ConditionId_t conditionI
 
 void Creature::executeConditions(uint32_t interval)
 {
-	ConditionList tempConditions{ conditions };
-	for (Condition* condition : tempConditions) {
-		auto it = std::find(conditions.begin(), conditions.end(), condition);
-		if (it == conditions.end()) {
+	size_t it = 0;
+	while (it < conditions.size()) {
+		Condition* condition = conditions[it];
+		if (condition->getType() == CONDITION_NONE) { // Check if it was scheduled to be safely removed
+			std::swap(conditions[it], conditions.back());
+			conditions.pop_back();
+
+			delete condition;
 			continue;
 		}
 
 		if (!condition->executeCondition(this, interval)) {
-			it = std::find(conditions.begin(), conditions.end(), condition);
-			if (it != conditions.end()) {
-				conditions.erase(it);
-				condition->endCondition(this);
-				onEndCondition(condition->getType());
-				delete condition;
-			}
+			std::swap(conditions[it], conditions.back());
+			conditions.pop_back();
+
+			condition->endCondition(this);
+			onEndCondition(condition->getType());
+			delete condition;
+			continue;
 		}
+		++it;
 	}
 }
 
@@ -1347,9 +1331,9 @@ int64_t Creature::getStepDuration() const
 		return 0;
 	}
 
+	#if GAME_FEATURE_NEWSPEED_LAW > 0
 	uint32_t calculatedStepSpeed;
 	uint32_t groundSpeed;
-
 	int32_t stepSpeed = getStepSpeed();
 	if (stepSpeed > -Creature::speedB) {
 		calculatedStepSpeed = floor((Creature::speedA * log((stepSpeed / 2) + Creature::speedB) + Creature::speedC) + 0.5);
@@ -1379,6 +1363,25 @@ int64_t Creature::getStepDuration() const
 	}
 
 	return stepDuration;
+	#else
+	uint32_t groundSpeed;
+	int32_t stepSpeed = getStepSpeed();
+	if (!stepSpeed) {
+		stepSpeed = 250;
+	}
+
+	Item* ground = tile->getGround();
+	if (ground) {
+		groundSpeed = Item::items[ground->getID()].speed;
+		if (groundSpeed == 0) {
+			groundSpeed = 150;
+		}
+	} else {
+		groundSpeed = 150;
+	}
+
+	return ((1000 * groundSpeed) / stepSpeed);
+	#endif
 }
 
 int64_t Creature::getEventStepTicks(bool onlyDelay) const
@@ -1400,7 +1403,8 @@ LightInfo Creature::getCreatureLight() const
 	return internalLight;
 }
 
-void Creature::setCreatureLight(LightInfo lightInfo) {
+void Creature::setCreatureLight(LightInfo lightInfo)
+{
 	internalLight = std::move(lightInfo);
 }
 
@@ -1418,10 +1422,8 @@ bool Creature::registerCreatureEvent(const std::string& name)
 
 	CreatureEventType_t type = event->getEventType();
 	if (hasEventRegistered(type)) {
-		for (CreatureEvent* creatureEvent : eventsList) {
-			if (creatureEvent == event) {
-				return false;
-			}
+		if (std::find(eventsList.begin(), eventsList.end(), event) != eventsList.end()) {
+			return false;
 		}
 	} else {
 		scriptEventsBitField |= static_cast<uint32_t>(1) << type;
@@ -1445,8 +1447,8 @@ bool Creature::unregisterCreatureEvent(const std::string& name)
 
 	bool resetTypeBit = true;
 
-	auto it = eventsList.begin(), end = eventsList.end();
-	while (it != end) {
+	auto it = eventsList.begin();
+	while (it != eventsList.end()) {
 		CreatureEvent* curEvent = *it;
 		if (curEvent == event) {
 			it = eventsList.erase(it);

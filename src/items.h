@@ -1,6 +1,6 @@
 /**
  * The Forgotten Server - a free and open-source MMORPG server emulator
- * Copyright (C) 2019  Mark Samman <mark.samman@gmail.com>
+ * Copyright (C) 2020  Mark Samman <mark.samman@gmail.com>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -68,6 +68,7 @@ enum ItemParseAttributes_t {
 	ITEM_PARSE_EXTRADEF,
 	ITEM_PARSE_ATTACK,
 	ITEM_PARSE_ROTATETO,
+	ITEM_PARSE_WRAPABLETO,
 	ITEM_PARSE_MOVEABLE,
 	ITEM_PARSE_BLOCKPROJECTILE,
 	ITEM_PARSE_PICKUPABLE,
@@ -216,16 +217,19 @@ class ItemType
 		ItemType& operator=(ItemType&& other) = default;
 
 		bool isGroundTile() const {
-			return group == ITEM_GROUP_GROUND;
+			return (group == ITEM_GROUP_GROUND);
 		}
 		bool isContainer() const {
-			return group == ITEM_GROUP_CONTAINER;
+			return (group == ITEM_GROUP_CONTAINER);
 		}
 		bool isSplash() const {
-			return group == ITEM_GROUP_SPLASH;
+			return (group == ITEM_GROUP_SPLASH);
 		}
 		bool isFluidContainer() const {
-			return group == ITEM_GROUP_FLUID;
+			return (group == ITEM_GROUP_FLUID);
+		}
+		bool isFluid() const {
+			return (group == ITEM_GROUP_SPLASH || group == ITEM_GROUP_FLUID);
 		}
 
 		bool isDoor() const {
@@ -262,7 +266,7 @@ class ItemType
 			return (useable);
 		}
 		bool hasSubType() const {
-			return (isFluidContainer() || isSplash() || stackable || charges != 0);
+			return (isFluid() || stackable || charges != 0);
 		}
 
 		Abilities& getAbilities() {
@@ -318,12 +322,13 @@ class ItemType
 		int32_t defense = 0;
 		int32_t extraDefense = 0;
 		int32_t armor = 0;
-		uint16_t rotateTo = 0;
 		int32_t runeMagLevel = 0;
 		int32_t runeLevel = 0;
 
 		CombatType_t combatType = COMBAT_NONE;
 
+		uint16_t rotateTo = 0;
+		uint16_t wrapableTo = 0;
 		uint16_t transformToOnUse[2] = {0, 0};
 		uint16_t transformToFree = 0;
 		uint16_t destroyTo = 0;
@@ -383,8 +388,6 @@ class ItemType
 class Items
 {
 	public:
-		using InventoryVector = std::vector<uint16_t>;
-
 		Items();
 
 		// non-copyable
@@ -395,6 +398,7 @@ class Items
 		void clear();
 
 		bool loadFromOtb(const std::string& file);
+		bool loadFromOtbLegacy(OTB::Loader& loader, const OTB::Node& rootNode);
 
 		const ItemType& operator[](size_t id) const {
 			return getItemType(id);
@@ -412,11 +416,6 @@ class Items
 		bool loadFromXml();
 		void parseItemNode(const pugi::xml_node& itemNode, uint16_t id);
 
-		void buildInventoryList();
-		const InventoryVector& getInventory() const {
-			return inventory;
-		}
-
 		size_t size() const {
 			return items.size();
 		}
@@ -424,6 +423,5 @@ class Items
 	private:
 		std::vector<uint16_t> reverseItemMap;
 		std::vector<ItemType> items;
-		InventoryVector inventory;
 };
 #endif

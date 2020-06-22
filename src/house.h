@@ -1,6 +1,6 @@
 /**
  * The Forgotten Server - a free and open-source MMORPG server emulator
- * Copyright (C) 2019  Mark Samman <mark.samman@gmail.com>
+ * Copyright (C) 2020  Mark Samman <mark.samman@gmail.com>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -20,8 +20,8 @@
 #ifndef FS_HOUSE_H_EB9732E7771A438F9CD0EFA8CB4C58C4
 #define FS_HOUSE_H_EB9732E7771A438F9CD0EFA8CB4C58C4
 
-#include <regex>
 #include <set>
+#include <unordered_set>
 
 #include "container.h"
 #include "housetile.h"
@@ -38,7 +38,6 @@ class AccessList
 		void addPlayer(const std::string& name);
 		void addGuild(const std::string& name);
 		void addGuildRank(const std::string& name, const std::string& rankName);
-		void addExpression(const std::string& expression);
 
 		bool isInList(const Player* player);
 
@@ -48,8 +47,6 @@ class AccessList
 		std::string list;
 		std::unordered_set<uint32_t> playerList;
 		std::unordered_set<uint32_t> guildRankList;
-		std::list<std::string> expressionList;
-		std::list<std::pair<std::regex, bool>> regExList;
 };
 
 class Door final : public Item

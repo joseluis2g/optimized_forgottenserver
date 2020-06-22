@@ -1,6 +1,6 @@
 /**
  * The Forgotten Server - a free and open-source MMORPG server emulator
- * Copyright (C) 2019  Mark Samman <mark.samman@gmail.com>
+ * Copyright (C) 2020  Mark Samman <mark.samman@gmail.com>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -20,8 +20,18 @@
 #include "otpch.h"
 
 #include "iomap.h"
-
 #include "bed.h"
+
+#ifdef __cpp_lib_filesystem
+#include <filesystem>
+namespace fs = std::filesystem;
+#elif __cpp_lib_experimental_filesystem
+#include <experimental/filesystem>
+namespace fs = std::experimental::filesystem;
+#else
+#include <boost/filesystem.hpp>
+namespace fs = boost::filesystem;
+#endif
 
 /*
 	OTBM_ROOTV1
@@ -68,6 +78,11 @@ Tile* IOMap::createTile(Item*& ground, Item* item, uint16_t x, uint16_t y, uint8
 
 bool IOMap::loadMap(Map* map, const std::string& fileName)
 {
+	if (!fs::exists(fileName)) {
+		setLastErrorString("Failed to load " + fileName + ": File doesn't exist.");
+		return false;
+	}
+
 	int64_t start = OTSYS_TIME();
 	OTB::Loader loader{fileName, OTB::Identifier{{'O', 'T', 'B', 'M'}}};
 	auto& root = loader.parseTree();
@@ -85,30 +100,12 @@ bool IOMap::loadMap(Map* map, const std::string& fileName)
 	}
 
 	uint32_t headerVersion = root_header.version;
-	if (headerVersion == 0) {
-		//In otbm version 1 the count variable after splashes/fluidcontainers and stackables
-		//are saved as attributes instead, this solves alot of problems with items
-		//that is changed (stackable/charges/fluidcontainer/splash) during an update.
-		setLastErrorString("This map need to be upgraded by using the latest map editor version to be able to load correctly.");
-		return false;
-	}
-
 	if (headerVersion > 2) {
 		setLastErrorString("Unknown OTBM version detected.");
 		return false;
 	}
-
-	if (root_header.majorVersionItems < 3) {
-		setLastErrorString("This map need to be upgraded by using the latest map editor version to be able to load correctly.");
-		return false;
-	}
-
-	if (root_header.majorVersionItems > Item::items.majorVersion) {
-		setLastErrorString("The map was saved with a different items.otb version, an upgraded items.otb is required.");
-		return false;
-	}
-
-	if (root_header.minorVersionItems < CLIENT_VERSION_810) {
+	
+	if (root_header.minorVersionItems < CLIENT_VERSION_750) {
 		setLastErrorString("This map needs to be updated.");
 		return false;
 	}
@@ -133,7 +130,7 @@ bool IOMap::loadMap(Map* map, const std::string& fileName)
 
 	for (auto& mapDataNode : mapNode.children) {
 		if (mapDataNode.type == OTBM_TILE_AREA) {
-			if (!parseTileArea(loader, mapDataNode, *map)) {
+			if (!parseTileArea(loader, mapDataNode, *map, (headerVersion == 0))) {
 				return false;
 			}
 		} else if (mapDataNode.type == OTBM_TOWNS) {
@@ -203,7 +200,7 @@ bool IOMap::parseMapDataAttributes(OTB::Loader& loader, const OTB::Node& mapNode
 	return true;
 }
 
-bool IOMap::parseTileArea(OTB::Loader& loader, const OTB::Node& tileAreaNode, Map& map)
+bool IOMap::parseTileArea(OTB::Loader& loader, const OTB::Node& tileAreaNode, Map& map, bool _legacy)
 {
 	PropStream propStream;
 	if (!loader.getProps(tileAreaNode, propStream)) {
@@ -297,7 +294,7 @@ bool IOMap::parseTileArea(OTB::Loader& loader, const OTB::Node& tileAreaNode, Ma
 				}
 
 				case OTBM_ATTR_ITEM: {
-					Item* item = Item::CreateItem(propStream);
+					Item* item = (_legacy ? Item::CreateItem_legacy(propStream) : Item::CreateItem(propStream));
 					if (!item) {
 						std::ostringstream ss;
 						ss << "[x:" << x << ", y:" << y << ", z:" << z << "] Failed to create item.";
@@ -352,7 +349,7 @@ bool IOMap::parseTileArea(OTB::Loader& loader, const OTB::Node& tileAreaNode, Ma
 				return false;
 			}
 
-			Item* item = Item::CreateItem(stream);
+			Item* item = (_legacy ? Item::CreateItem_legacy(stream) : Item::CreateItem(stream));
 			if (!item) {
 				std::ostringstream ss;
 				ss << "[x:" << x << ", y:" << y << ", z:" << z << "] Failed to create item.";
@@ -360,7 +357,7 @@ bool IOMap::parseTileArea(OTB::Loader& loader, const OTB::Node& tileAreaNode, Ma
 				return false;
 			}
 
-			if (!item->unserializeItemNode(loader, itemNode, stream)) {
+			if (!item->unserializeItemNode(loader, itemNode, stream, _legacy)) {
 				std::ostringstream ss;
 				ss << "[x:" << x << ", y:" << y << ", z:" << z << "] Failed to load item " << item->getID() << '.';
 				setLastErrorString(ss.str());

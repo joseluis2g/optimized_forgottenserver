@@ -1,6 +1,6 @@
 /**
  * The Forgotten Server - a free and open-source MMORPG server emulator
- * Copyright (C) 2019  Mark Samman <mark.samman@gmail.com>
+ * Copyright (C) 2020  Mark Samman <mark.samman@gmail.com>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -20,8 +20,6 @@
 #ifndef FS_TILE_H_96C7EE7CF8CD48E59D5D554A181F0C56
 #define FS_TILE_H_96C7EE7CF8CD48E59D5D554A181F0C56
 
-#include <unordered_set>
-
 #include "cylinder.h"
 #include "item.h"
 #include "tools.h"
@@ -36,7 +34,6 @@ class BedItem;
 
 using CreatureVector = std::vector<Creature*>;
 using ItemVector = std::vector<Item*>;
-using SpectatorHashSet = std::unordered_set<Creature*>;
 
 enum tileflags_t : uint32_t {
 	TILESTATE_NONE = 0,
@@ -65,6 +62,7 @@ enum tileflags_t : uint32_t {
 	TILESTATE_IMMOVABLENOFIELDBLOCKPATH = 1 << 21,
 	TILESTATE_NOFIELDBLOCKPATH = 1 << 22,
 	TILESTATE_SUPPORTS_HANGABLE = 1 << 23,
+	TILESTATE_BLOCKPROJECTILE = 1 << 24,
 
 	TILESTATE_FLOORCHANGE = TILESTATE_FLOORCHANGE_DOWN | TILESTATE_FLOORCHANGE_NORTH | TILESTATE_FLOORCHANGE_SOUTH | TILESTATE_FLOORCHANGE_EAST | TILESTATE_FLOORCHANGE_WEST | TILESTATE_FLOORCHANGE_SOUTH_ALT | TILESTATE_FLOORCHANGE_EAST_ALT,
 };
@@ -77,6 +75,43 @@ enum ZoneType_t {
 	ZONE_NORMAL,
 };
 
+class SpectatorVector : public CreatureVector
+{
+	public:
+		void mergeSpectators(const SpectatorVector& spectators) {
+			size_t it = 0, end = spectators.size();
+			while (it < end) {
+				Creature* spectator = spectators[it];
+
+				size_t cit = 0, cend = size();
+				while (cit < cend) {
+					if (operator[](cit) == spectator) {
+						goto Skip_Duplicate;
+					} else {
+						++cit;
+					}
+				}
+
+				emplace_back(spectator);
+				Skip_Duplicate:
+				++it;
+			}
+		}
+
+		void erase(Creature* spectator) {
+			size_t it = 0, end = size();
+			while (it < end) {
+				if (operator[](it) == spectator) {
+					std::swap(operator[](it), back());
+					pop_back();
+					return;
+				} else {
+					++it;
+				}
+			}
+		}
+};
+
 class TileItemVector : private ItemVector
 {
 	public:
@@ -86,7 +121,7 @@ class TileItemVector : private ItemVector
 		using ItemVector::rend;
 		using ItemVector::size;
 		using ItemVector::clear;
-		using ItemVector::at;
+		using ItemVector::operator[];
 		using ItemVector::insert;
 		using ItemVector::erase;
 		using ItemVector::push_back;
@@ -97,54 +132,54 @@ class TileItemVector : private ItemVector
 		using ItemVector::const_reverse_iterator;
 
 		iterator getBeginDownItem() {
-			return begin();
+			return begin() + topItemCount;
 		}
 		const_iterator getBeginDownItem() const {
-			return begin();
+			return begin() + topItemCount;
 		}
 		iterator getEndDownItem() {
-			return begin() + downItemCount;
+			return end();
 		}
 		const_iterator getEndDownItem() const {
-			return begin() + downItemCount;
+			return end();
 		}
 		iterator getBeginTopItem() {
-			return getEndDownItem();
+			return begin();
 		}
 		const_iterator getBeginTopItem() const {
-			return getEndDownItem();
+			return begin();
 		}
 		iterator getEndTopItem() {
-			return end();
+			return getBeginDownItem();
 		}
 		const_iterator getEndTopItem() const {
-			return end();
+			return getBeginDownItem();
 		}
 
 		uint32_t getTopItemCount() const {
-			return size() - downItemCount;
+			return topItemCount;
 		}
 		uint32_t getDownItemCount() const {
-			return downItemCount;
+			return size() - topItemCount;
 		}
 		inline Item* getTopTopItem() const {
-			if (getTopItemCount() == 0) {
+			if (topItemCount == 0) {
 				return nullptr;
 			}
 			return *(getEndTopItem() - 1);
 		}
 		inline Item* getTopDownItem() const {
-			if (downItemCount == 0) {
+			if (getDownItemCount() == 0) {
 				return nullptr;
 			}
-			return *getBeginDownItem();
+			return *(getEndDownItem() - 1);
 		}
-		void addDownItemCount(int32_t increment) {
-			downItemCount += increment;
+		void addTopItemCount(int32_t increment) {
+			topItemCount += increment;
 		}
 
 	private:
-		uint16_t downItemCount = 0;
+		uint16_t topItemCount = 0;
 };
 
 class Tile : public Cylinder
@@ -287,15 +322,15 @@ class Tile : public Cylinder
 	private:
 		void onAddTileItem(Item* item);
 		void onUpdateTileItem(Item* oldItem, const ItemType& oldType, Item* newItem, const ItemType& newType);
-		void onRemoveTileItem(const SpectatorHashSet& spectators, const std::vector<int32_t>& oldStackPosVector, Item* item);
-		void onUpdateTile(const SpectatorHashSet& spectators);
+		void onRemoveTileItem(const SpectatorVector& spectators, const std::vector<int32_t>& oldStackPosVector, Item* item);
+		void onUpdateTile(const SpectatorVector& spectators);
 
 		void setTileFlags(const Item* item);
 		void resetTileFlags(const Item* item);
 
 		Item* ground = nullptr;
-		Position tilePos;
 		uint32_t flags = 0;
+		Position tilePos;
 };
 
 // Used for walkable tiles, where there is high likeliness of
